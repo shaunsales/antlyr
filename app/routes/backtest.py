@@ -11,9 +11,8 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from app.routes.strategy import discover_strategies, _get_strategy_instance
@@ -22,7 +21,6 @@ from core.strategy.engine import BacktestEngine
 from core.strategy.position import CostModel, DEFAULT_COSTS
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 
 # ---------------------------------------------------------------------------
@@ -78,29 +76,22 @@ def _downsample_series(timestamps, values, max_points=2000):
 # Routes
 # ---------------------------------------------------------------------------
 
-@router.get("/", response_class=HTMLResponse)
-async def backtest_page(request: Request):
-    """Backtest viewer page."""
+@router.get("/")
+async def backtest_page():
+    """List all backtest runs and strategies."""
     runs = _list_runs()
     strategies = discover_strategies()
-
-    return templates.TemplateResponse("pages/backtest.html", {
-        "request": request,
-        "runs": runs,
-        "strategies": strategies,
-        "active_tab": "backtest",
-    })
+    return {"runs": runs, "strategies": strategies}
 
 
-@router.get("/view/{strategy_name}/{run_id}", response_class=HTMLResponse)
-async def view_run(request: Request, strategy_name: str, run_id: str):
-    """Load and display a backtest run."""
+@router.get("/view/{strategy_name}/{run_id}")
+async def view_run(strategy_name: str, run_id: str):
+    """Load and display a backtest run — returns JSON."""
     results_dir = strategy_folder(strategy_name) / "results"
 
-    # Load meta
     meta_path = results_dir / f"{run_id}_meta.json"
     if not meta_path.exists():
-        return HTMLResponse('<div class="text-red-400 p-4">Run not found</div>')
+        return {"error": "Run not found"}
 
     with open(meta_path) as f:
         meta = json.load(f)
@@ -160,15 +151,14 @@ async def view_run(request: Request, strategy_name: str, run_id: str):
     # Tearsheet link
     tearsheet_exists = (results_dir / f"{run_id}_tearsheet.html").exists()
 
-    return templates.TemplateResponse("partials/backtest/viewer.html", {
-        "request": request,
+    return {
         "strategy_name": strategy_name,
         "run_id": run_id,
         "meta": meta,
         "chart_data": chart_data,
         "trades": trades,
         "tearsheet_exists": tearsheet_exists,
-    })
+    }
 
 
 @router.get("/tearsheet/{strategy_name}/{run_id}")
@@ -176,7 +166,7 @@ async def serve_tearsheet(strategy_name: str, run_id: str):
     """Serve the QuantStats HTML tearsheet."""
     path = strategy_folder(strategy_name) / "results" / f"{run_id}_tearsheet.html"
     if not path.exists():
-        return HTMLResponse('<div class="text-red-400 p-4">Tearsheet not found</div>')
+        return JSONResponse({"error": "Tearsheet not found"}, status_code=404)
     return FileResponse(path, media_type="text/html")
 
 

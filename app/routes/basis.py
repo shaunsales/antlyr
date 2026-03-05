@@ -4,11 +4,8 @@ Basis Builder Routes
 Web UI for creating and managing basis files.
 """
 
-from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter, Request  # Request still used by create_basis
 import json
 import numpy as np
 
@@ -23,20 +20,14 @@ from core.data.basis import (
 from core.analysis.basis_stats import compute_basis_stats
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 
-@router.get("/", response_class=HTMLResponse)
-async def basis_builder(request: Request):
-    """Basis builder page."""
+@router.get("/")
+async def basis_builder():
+    """List data tree and basis files."""
     data_tree = list_all_data()
     basis_files = list_basis_files()
-    
-    return templates.TemplateResponse("pages/basis.html", {
-        "request": request,
-        "data_tree": data_tree,
-        "basis_files": basis_files,
-    })
+    return {"data_tree": data_tree, "basis_files": basis_files}
 
 
 @router.get("/check-overlap")
@@ -101,18 +92,14 @@ async def list_basis():
     return list_basis_files()
 
 
-@router.get("/preview/{ticker}/{interval}", response_class=HTMLResponse)
-async def preview_basis(request: Request, ticker: str, interval: str, period: Optional[str] = None):
-    """Preview a basis file."""
+@router.get("/preview/{ticker}/{interval}")
+async def preview_basis(ticker: str, interval: str, period: Optional[str] = None):
+    """Preview a basis file — returns JSON."""
     periods = [period] if period else None
     df = load_basis(ticker, interval, periods)
-    
+
     if df is None:
-        return templates.TemplateResponse("partials/basis/no_data.html", {
-            "request": request,
-            "ticker": ticker,
-            "interval": interval,
-        })
+        return {"error": "No data found", "ticker": ticker, "interval": interval}
     
     # Find quote venues from columns
     quote_venues = []
@@ -183,13 +170,12 @@ async def preview_basis(request: Request, ticker: str, interval: str, period: Op
         col = f"{venue}_basis_bps"
         venue_stats[venue] = compute_basis_stats(df[col], interval)
     
-    return templates.TemplateResponse("partials/basis/preview.html", {
-        "request": request,
+    return {
         "ticker": ticker,
         "interval": interval,
         "chart_interval": chart_interval,
         "quote_venues": quote_venues,
         "stats": stats,
         "venue_stats": venue_stats,
-        "chart_data": json.dumps(chart_data),
-    })
+        "chart_data": chart_data,
+    }

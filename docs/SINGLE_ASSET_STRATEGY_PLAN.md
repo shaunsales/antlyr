@@ -6,6 +6,57 @@ Three stages: **Data → Backtest → Visualisation**
 
 ---
 
+## Architecture
+
+### Backend — Python (FastAPI)
+Pure JSON API. All data processing, indicator computation, backtest execution, and file management stays in Python. No HTML rendering — the backend is a headless API server.
+
+- **FastAPI** — async, fast, auto-generated OpenAPI docs
+- **Endpoints return JSON only** — no Jinja2 templates
+- CORS enabled for local dev (React dev server on different port)
+- In production, FastAPI serves the React build as static files (single deployment)
+
+### Frontend — React SPA
+Separate app in `frontend/` directory. Handles all UI rendering, state management, and user interaction.
+
+**Stack:**
+| Layer | Choice | Why |
+|-------|--------|-----|
+| Framework | React 19 + Vite | Fastest DX, dominant ecosystem |
+| Language | TypeScript | Type safety, API contract enforcement |
+| Styling | TailwindCSS v4 | Already used, utility-first, fast iteration |
+| Components | shadcn/ui | Beautiful defaults, copy-paste ownership, Radix primitives |
+| API State | TanStack Query | Caching, loading/error states, background refetch |
+| Charts | lightweight-charts-react | TradingView charts as React components (already using LW Charts) |
+| Routing | React Router v7 | Client-side page navigation |
+| Icons | Lucide React | Clean, consistent icon set |
+
+**Project structure:**
+```
+frontend/
+  src/
+    api/              # API client functions (typed fetch wrappers)
+    components/       # Reusable UI components (charts, tables, etc.)
+    pages/            # Page-level components (Data, Strategy, Backtest)
+    hooks/            # Custom React hooks
+    types/            # TypeScript interfaces matching API responses
+    lib/              # Utilities
+  public/
+  index.html
+  vite.config.ts
+  tailwind.config.ts
+```
+
+**Dev workflow:**
+- `uvicorn app.main:app --reload` → API on :8000
+- `npm run dev` (in `frontend/`) → React on :5173 (proxies API calls to :8000)
+- Single terminal script or `concurrently` to run both
+
+**Migration approach:**
+The existing Jinja2/HTMX/Alpine frontend is replaced entirely. Each page becomes a React route with components that fetch from the same API endpoints. The backend routes only need their `TemplateResponse()` calls changed to return JSON (the logic stays the same). The `core/` Python package is completely untouched.
+
+---
+
 ## Design Principles
 
 ### No Look-Ahead Bias
@@ -120,14 +171,20 @@ If any check fails, the engine raises a clear error (e.g. "Missing 1h.parquet �
 - Write `manifest.json` with full spec + build timestamp + data quality summary.
 
 ### 3A.3 Web UI — Strategy Data Builder Page
-- **Auto-discovers** strategy classes from `strategies/` directory.
-- Select a strategy from dropdown → UI reads its `data_spec()` and displays:
-  - Venue, market, ticker (read-only, defined by strategy)
-  - Intervals and indicators (read-only, defined by strategy)
-  - Date range picker (user chooses this)
-- "Build Data" button → downloads OHLCV, computes indicators, saves parquets + manifest.
-- Shows data quality summary (coverage %, gaps, bar counts per interval).
-- If data already exists, shows current status. Flags if date range changed or spec doesn't match files.
+React page at `/strategy`. Components:
+- **`<StrategySidebar />`** — auto-discovers strategy classes, click to select
+- **`<StrategySpec />`** — displays venue, market, ticker, intervals, indicators (read-only from `data_spec()`)
+- **`<BuildControls />`** — calendar month grid picker for date range, "Build Data" button
+- **`<CurrentData />`** — shows manifest info, clickable file rows to preview data, delete button
+- **`<DataPreview />`** — inline chart + table preview of a parquet file (see 3C.2)
+
+API endpoints (JSON only):
+- `GET /strategy/` — list all discovered strategies
+- `GET /strategy/spec/{class_name}` — spec + status + manifest
+- `GET /strategy/available-dates/{class_name}` — available date ranges per interval
+- `POST /strategy/build` — build data files
+- `POST /strategy/delete` — delete data files
+- `GET /strategy/preview/{class_name}/{interval}` — chart + table data for a parquet file
 
 ---
 
@@ -217,31 +274,36 @@ When ready:
 
 ---
 
-## Phase 3C: Visualisation
+## Phase 3C: Visualisation (React Frontend)
 
-### 3C.1 Backtest Viewer (Web UI)
-Load a saved backtest run and render:
-- **Price chart** (1m OHLCV or downsampled) with trade entry/exit markers
-- **Indicator charts** (one per indicator, stacked below price, synced horizontally)
-- **Equity curve** chart
-- **Drawdown** chart
-- All charts use Lightweight Charts, synced time scales (same pattern as basis preview).
+All visualisation is built as React components using `lightweight-charts-react` and shadcn/ui.
+
+### 3C.1 Backtest Viewer
+React page at `/backtest/:runId`. Components:
+- **`<PriceChart />`** — 1m OHLCV (or downsampled) with trade entry/exit markers overlaid
+- **`<IndicatorPanel />`** — one panel per indicator, stacked below price, synced time scales
+- **`<EquityCurve />`** — NAV over time from bars parquet
+- **`<DrawdownChart />`** — drawdown % from peak
+- All chart components share a synced time scale via a common hook (`useChartSync`)
 
 ### 3C.2 Source Data Viewer
-- View any of the strategy's data parquet files directly (OHLCV + indicators per interval).
-- Useful for validating data quality before running backtests.
+React component in the Strategy page. Click a data file → inline preview with:
+- **`<StrategyChart />`** — price + overlay indicators + separate indicator panel + volume
+- **`<DataTable />`** — paginated table with color-coded indicator columns
+- API endpoint: `GET /strategy/preview/{class_name}/{interval}?page=N`
 
 ### 3C.3 Trade Inspector
-- Click a trade on the chart to see its decision context (the snapshot from 3B.3).
-- Shows all indicator values at entry and exit with their timestamps.
+- Click a trade marker on the price chart → side panel or modal shows decision context
+- Uses the context snapshot from 3B.3 (indicator values + timestamps at entry/exit)
+- React component: `<TradeInspector trade={selectedTrade} />`
 
 ### 3C.4 QuantStats Tearsheet
-- Embed or link to the generated HTML tearsheet.
-- Includes: monthly returns heatmap, drawdown periods, rolling Sharpe, etc.
+- Embed generated HTML tearsheet in an iframe, or link to open in new tab
+- API endpoint: `GET /backtest/tearsheet/{run_id}` returns the HTML file
 
 ### 3C.5 Optimisation Results (Deferred)
-- Table view of parameter sweep results, sortable by any metric.
-- Click a run to view its full backtest visualisation.
+- shadcn/ui `<DataTable />` with sortable columns for parameter sweep results
+- Click a row to navigate to its full backtest view
 
 *Further detail to be defined as we approach this stage.*
 
@@ -282,20 +344,25 @@ With known entry/exit prices we can hand-calculate exact expected PnL, costs, NA
 
 ## Implementation Order
 
-| Step | Deliverable | Priority |
-|------|-------------|----------|
-| 3A.1 | `StrategyDataSpec` + manifest schema | High |
-| 3A.2 | Data builder (download, compute indicators, save parquets) | High |
-| 3A.3 | Web UI — strategy data builder page | High |
-| 3B.1 | `StrategyData` multi-interval accessor | High |
-| 3B.2 | Refactored strategy interface + engine loop | High |
+| Step | Deliverable | Status |
+|------|-------------|--------|
+| 3A.1 | `StrategyDataSpec` + manifest schema | ✅ Done |
+| 3A.2 | Data builder (download, compute indicators, save parquets) | ✅ Done |
+| 3A.3 | Backend API — strategy endpoints (JSON) | ✅ Done |
+| 3B.1 | `StrategyData` multi-interval accessor | ✅ Done |
+| 3B.2 | Refactored strategy interface + engine loop | ✅ Done |
+| Test | Deterministic test strategy + engine validation | ✅ Done |
+| **FE** | **Migrate frontend to React SPA** | **← Next** |
+|  | → Scaffold Vite + React + TypeScript + TailwindCSS + shadcn/ui |  |
+|  | → Convert backend routes to pure JSON API (remove Jinja2) |  |
+|  | → Build React pages: Data, Basis, Strategy, Backtest |  |
+|  | → Reimplement strategy builder with React components |  |
+|  | → Chart components using lightweight-charts-react |  |
 | 3B.3 | Decision context capture | High |
 | 3B.4 | Bar-level state recording | High |
 | 3B.5 | QuantStats metrics + output files | Medium |
 | 3B.6 | Parameter optimisation (grid search) | Deferred |
-| 3C.1 | Backtest viewer (charts + trades) | Medium |
-| 3C.2 | Source data viewer | Low |
+| 3C.1 | Backtest viewer (React — charts + trades) | Medium |
 | 3C.3 | Trade inspector (click to see context) | Low |
 | 3C.4 | QuantStats tearsheet embed | Low |
 | 3C.5 | Optimisation results table | Deferred |
-| Test | Deterministic test strategy + engine validation | High |

@@ -6,11 +6,8 @@ FastAPI app for browsing data, running backtests, and visualizing results.
 Run with: uvicorn app.main:app --reload
 """
 
-from pathlib import Path
-from fastapi import FastAPI, Request, BackgroundTasks
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes import data, backtest, basis, strategy
 
@@ -21,17 +18,14 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Static files and templates
-APP_DIR = Path(__file__).parent
-app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=APP_DIR / "templates")
-
-
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    """Home page - redirect to data browser."""
-    return templates.TemplateResponse("pages/home.html", {"request": request})
-
+# CORS — allow React dev server
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Include routers
 app.include_router(data.router, prefix="/data", tags=["data"])

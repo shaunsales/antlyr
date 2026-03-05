@@ -8,9 +8,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import pandas as pd
 import io
@@ -20,7 +19,6 @@ from core.data.binance import download_binance_months, list_binance_symbols, INT
 from core.data.validator import validate_ohlcv, get_data_summary
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 # Track download jobs
 download_jobs: dict[str, dict] = {}
@@ -36,30 +34,21 @@ class DownloadRequest(BaseModel):
     end_month: str
 
 
-@router.get("/", response_class=HTMLResponse)
-async def data_browser(request: Request):
-    """Data browser page."""
+@router.get("/")
+async def data_browser():
+    """List all data and available intervals."""
     data_tree = list_all_data()
-    return templates.TemplateResponse("pages/data.html", {
-        "request": request,
-        "data_tree": data_tree,
-        "intervals": INTERVALS,
-    })
+    return {"data_tree": data_tree, "intervals": INTERVALS}
 
 
-@router.get("/tree", response_class=HTMLResponse)
-async def data_tree(request: Request):
-    """Get data tree as HTML fragment (for HTMX)."""
-    data_tree = list_all_data()
-    return templates.TemplateResponse("partials/data/tree.html", {
-        "request": request,
-        "data_tree": data_tree,
-    })
+@router.get("/tree")
+async def data_tree():
+    """Get data tree as JSON."""
+    return {"data_tree": list_all_data()}
 
 
-@router.get("/preview/{venue}/{market}/{ticker}/{interval}", response_class=HTMLResponse)
+@router.get("/preview/{venue}/{market}/{ticker}/{interval}")
 async def data_preview(
-    request: Request,
     venue: str,
     market: str,
     ticker: str,
@@ -70,62 +59,45 @@ async def data_preview(
     page: int = 1,
     page_size: int = 100,
 ):
-    """Preview data with chart, stats, pagination, and date filters."""
+    """Preview data with chart, stats, and pagination — returns JSON."""
     try:
         available_periods = list_available_periods(venue, market, ticker, interval)
-        
+
         if not available_periods:
-            return templates.TemplateResponse("partials/data/no_data.html", {
-                "request": request,
-                "ticker": ticker,
-                "interval": interval,
-            })
-        
-        # Parse periods parameter or use all
-        if periods:
-            selected_periods = periods.split(",")
-        else:
-            selected_periods = available_periods
-        
-        # Load data
+            return {"error": "No data found", "ticker": ticker, "interval": interval}
+
+        selected_periods = periods.split(",") if periods else available_periods
+
         df = load_ohlcv(venue, market, ticker, interval, periods=selected_periods)
-        
-        # Apply date filters if provided
+
         if start_date:
             start_dt = pd.to_datetime(start_date).tz_localize("UTC")
             df = df[df.index >= start_dt]
         if end_date:
             end_dt = pd.to_datetime(end_date).tz_localize("UTC")
             df = df[df.index <= end_dt]
-        
-        # Get stats (on filtered data)
+
         summary = get_data_summary(df)
         report = validate_ohlcv(df, interval)
-        
-        # Pagination for table
+
         total_rows = len(df)
         total_pages = max(1, (total_rows + page_size - 1) // page_size)
         page = max(1, min(page, total_pages))
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
         table_df = df.iloc[start_idx:end_idx]
-        
-        # Prepare table data
+
         table_data = _prepare_table_data(table_df)
-        
-        # Generate chart data (all points - Plotly handles it well)
         chart_data = _prepare_chart_data(df, max_points=50000)
-        
-        # Date range for filters
+
         date_range = {
             "min": df.index.min().strftime("%Y-%m-%d") if len(df) > 0 else "",
             "max": df.index.max().strftime("%Y-%m-%d") if len(df) > 0 else "",
             "start": start_date or "",
             "end": end_date or "",
         }
-        
-        return templates.TemplateResponse("partials/data/preview.html", {
-            "request": request,
+
+        return {
             "venue": venue,
             "market": market,
             "ticker": ticker,
@@ -134,7 +106,7 @@ async def data_preview(
             "selected_periods": selected_periods,
             "summary": summary,
             "report": report,
-            "chart_data": json.dumps(chart_data),
+            "chart_data": chart_data,
             "table_data": table_data,
             "pagination": {
                 "page": page,
@@ -143,12 +115,9 @@ async def data_preview(
                 "total_pages": total_pages,
             },
             "date_range": date_range,
-        })
+        }
     except Exception as e:
-        return templates.TemplateResponse("partials/data/error.html", {
-            "request": request,
-            "error": str(e),
-        })
+        return {"error": str(e)}
 
 
 @router.post("/download")

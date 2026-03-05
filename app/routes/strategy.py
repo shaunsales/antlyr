@@ -12,9 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from core.strategy.base import SingleAssetStrategy
@@ -29,7 +27,6 @@ from core.strategy.data import (
 )
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 
 # ---------------------------------------------------------------------------
@@ -116,63 +113,67 @@ def _get_strategy_status(strategy_name: str, spec: Optional[StrategyDataSpec]) -
 # Routes
 # ---------------------------------------------------------------------------
 
-@router.get("/", response_class=HTMLResponse)
-async def strategy_page(request: Request):
-    """Strategy data builder page."""
+@router.get("/")
+async def strategy_list():
+    """List all discovered strategies."""
     strategies = discover_strategies()
-    return templates.TemplateResponse("pages/strategy.html", {
-        "request": request,
-        "strategies": strategies,
-        "active_tab": "strategy",
-    })
+    return {
+        "strategies": [
+            {
+                "class_name": s["class_name"],
+                "module": s["module"],
+                "has_data_spec": s["has_data_spec"],
+            }
+            for s in strategies
+        ]
+    }
 
 
-@router.get("/spec/{class_name}", response_class=HTMLResponse)
-async def strategy_spec(request: Request, class_name: str):
-    """Return strategy spec details as an HTMX partial."""
+@router.get("/spec/{class_name}")
+async def strategy_spec(class_name: str):
+    """Return strategy spec + build status as JSON."""
     instance = _get_strategy_instance(class_name)
     if instance is None:
-        return HTMLResponse(
-            '<div class="text-red-400 text-sm p-4">Strategy not found</div>'
-        )
+        return {"error": "Strategy not found"}
 
     spec = instance.data_spec()
     if spec is None:
-        return HTMLResponse(
-            '<div class="text-yellow-400 text-sm p-4">This strategy does not define a data_spec() yet</div>'
-        )
+        return {"error": "Strategy does not define data_spec()"}
 
     status = _get_strategy_status(instance.name, spec)
 
-    # Extract strategy description from docstring
     doc = instance.__class__.__doc__ or ""
     description = doc.strip().split("\n")[0] if doc.strip() else ""
 
-    # Build line-by-line data requirements
-    data_reqs = []
+    # Build intervals with indicator details
+    intervals = []
     for interval, indicators in spec.intervals.items():
-        if not indicators:
-            data_reqs.append({"interval": interval, "type": "OHLCV", "detail": "Price data only"})
-        else:
-            for ind_name, ind_params in indicators:
-                param_str = ", ".join(f"{v}" for v in ind_params.values()) if ind_params else ""
-                data_reqs.append({
-                    "interval": interval,
-                    "type": "indicator",
-                    "name": ind_name.upper(),
-                    "detail": f"{ind_name}({param_str})" if param_str else ind_name,
-                    "warmup": spec.warmup_bars(interval),
-                })
+        ind_list = []
+        for ind_name, ind_params in indicators:
+            ind_list.append({
+                "name": ind_name,
+                "params": ind_params,
+                "warmup_bars": spec.warmup_bars(interval),
+            })
+        intervals.append({
+            "interval": interval,
+            "indicators": ind_list,
+            "is_price_only": len(indicators) == 0,
+        })
 
-    return templates.TemplateResponse("partials/strategy/spec.html", {
-        "request": request,
-        "strategy_name": instance.name,
+    return {
         "class_name": class_name,
-        "spec": spec,
-        "status": status,
         "description": description,
-        "data_reqs": data_reqs,
-    })
+        "spec": {
+            "venue": spec.venue,
+            "market": spec.market,
+            "ticker": spec.ticker,
+            "intervals": intervals,
+        },
+        "has_manifest": status["has_manifest"],
+        "manifest": status["manifest"],
+        "errors": status["errors"],
+    }
 
 
 @router.get("/available-dates/{class_name}")
@@ -323,30 +324,26 @@ async def build_strategy_data(req: BuildRequest):
 _PRICE_OVERLAY_PREFIXES = ("SMA_", "EMA_", "BB_", "VWAP")
 
 
-@router.get("/preview/{class_name}/{interval}", response_class=HTMLResponse)
+@router.get("/preview/{class_name}/{interval}")
 async def strategy_data_preview(
-    request: Request,
     class_name: str,
     interval: str,
     page: int = 1,
     page_size: int = 100,
 ):
-    """Preview a strategy's built parquet file with chart + table."""
+    """Preview a strategy's built parquet file — returns JSON for React."""
     instance = _get_strategy_instance(class_name)
     if instance is None:
-        return HTMLResponse('<div class="text-red-400 text-sm p-4">Strategy not found</div>')
+        return {"error": "Strategy not found"}
 
     parquet_path = strategy_folder(instance.name) / "data" / f"{interval}.parquet"
     if not parquet_path.exists():
-        return HTMLResponse(
-            f'<div class="text-yellow-400 text-sm p-4">No data file for {interval}</div>'
-        )
+        return {"error": f"No data file for {interval}"}
 
     df = pd.read_parquet(parquet_path)
 
     # Identify column groups
     ohlcv_cols = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
-    # Extra raw columns (not indicators) — skip from indicator charts
     _raw_extras = {"quote_volume", "count", "taker_buy_volume", "taker_buy_quote_volume", "market_open"}
     indicator_cols = [c for c in df.columns if c not in ohlcv_cols and c not in _raw_extras]
     overlay_cols = [c for c in indicator_cols if any(c.startswith(p) for p in _PRICE_OVERLAY_PREFIXES)]
@@ -360,19 +357,43 @@ async def strategy_data_preview(
         chart_df = chart_df.iloc[::step]
 
     chart_df = chart_df.fillna(0)
-    timestamps = [t.isoformat() for t in chart_df.index]
 
-    chart_data = {
-        "timestamps": timestamps,
-        "close": chart_df["close"].tolist() if "close" in chart_df.columns else [],
-        "volume": chart_df["volume"].tolist() if "volume" in chart_df.columns else [],
-        "overlays": {},
-        "indicators": {},
-    }
+    # Build lightweight-charts-compatible data structures
+    ohlcv_data = []
+    volume_data = []
+    for ts, row in chart_df.iterrows():
+        t = ts.isoformat()
+        ohlcv_data.append({
+            "time": t,
+            "open": row["open"],
+            "high": row["high"],
+            "low": row["low"],
+            "close": row["close"],
+        })
+        if "volume" in chart_df.columns:
+            color = "#22c55e80" if row["close"] >= row["open"] else "#ef444480"
+            volume_data.append({"time": t, "value": row["volume"], "color": color})
+
+    overlays_data = {}
     for col in overlay_cols:
-        chart_data["overlays"][col] = chart_df[col].tolist()
+        overlays_data[col] = [
+            {"time": ts.isoformat(), "value": v}
+            for ts, v in chart_df[col].items()
+        ]
+
+    indicators_data = {}
     for col in separate_cols:
-        chart_data["indicators"][col] = chart_df[col].tolist()
+        indicators_data[col] = [
+            {"time": ts.isoformat(), "value": v}
+            for ts, v in chart_df[col].items()
+        ]
+
+    chart_data = json.dumps({
+        "ohlcv": ohlcv_data,
+        "volume": volume_data,
+        "overlays": overlays_data,
+        "indicators": indicators_data,
+    })
 
     # Prepare table data (paginated)
     total_rows = len(df)
@@ -398,20 +419,19 @@ async def strategy_data_preview(
                 rec[col] = str(val)
         table_data.append(rec)
 
-    return templates.TemplateResponse("partials/strategy/data_preview.html", {
-        "request": request,
+    return {
         "class_name": class_name,
         "strategy_name": instance.name,
         "interval": interval,
-        "chart_data": json.dumps(chart_data),
-        "table_data": table_data,
+        "chart_data": chart_data,
         "all_cols": all_cols,
         "overlay_cols": overlay_cols,
         "separate_cols": separate_cols,
+        "table_data": table_data,
         "pagination": {
             "page": page,
             "page_size": page_size,
             "total_rows": total_rows,
             "total_pages": total_pages,
         },
-    })
+    }
