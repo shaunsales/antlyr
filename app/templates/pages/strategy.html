@@ -1,0 +1,110 @@
+{% extends "layouts/base.html" %}
+
+{% set active_tab = "strategy" %}
+{% block title %}Strategy Builder - Strategy Lab{% endblock %}
+
+{% block main_class %}flex h-[calc(100vh-3.5rem)]{% endblock %}
+
+{% block content %}
+<!-- Sidebar -->
+<aside class="w-80 flex-shrink-0 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700 flex-shrink-0">
+        <span class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Strategy Builder</span>
+    </div>
+    <div class="flex-1 overflow-y-auto">
+
+        <!-- Strategy List -->
+        <div class="border-b border-gray-700 px-4 py-3 space-y-1.5">
+            <label class="text-xs text-gray-500 uppercase tracking-wide">Select Strategy</label>
+            {% if strategies %}
+            {% for s in strategies %}
+            <button hx-get="/strategy/spec/{{ s.class_name }}"
+                    hx-target="#strategy-detail"
+                    hx-boost="false"
+                    class="w-full text-left px-3 py-2 rounded text-sm hover:bg-gray-700 transition flex items-center justify-between group">
+                <div>
+                    <span class="text-gray-200 font-medium group-hover:text-white">{{ s.class_name }}</span>
+                    <span class="text-xs text-gray-500 ml-1.5">{{ s.module }}</span>
+                </div>
+                {% if s.has_data_spec %}
+                <span class="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" title="Has data_spec()"></span>
+                {% else %}
+                <span class="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" title="No data_spec()"></span>
+                {% endif %}
+            </button>
+            {% endfor %}
+            {% else %}
+            <p class="text-xs text-gray-500 py-2">
+                No strategies found. Create a strategy class in <code class="text-gray-400">strategies/</code> that extends <code class="text-gray-400">SingleAssetStrategy</code>.
+            </p>
+            {% endif %}
+        </div>
+
+        <!-- Help -->
+        <div class="px-4 py-3 text-xs text-gray-500 space-y-2">
+            <p class="font-semibold text-gray-400">How it works:</p>
+            <ol class="list-decimal ml-3 space-y-1">
+                <li>Create a strategy class in <code class="text-gray-400">strategies/</code></li>
+                <li>Implement <code class="text-gray-400">data_spec()</code> to declare data needs</li>
+                <li>Select it here and build data files</li>
+                <li>Run backtests from the Backtest tab</li>
+            </ol>
+        </div>
+
+    </div>
+</aside>
+
+<!-- Main: Detail Area -->
+<div class="flex-1 overflow-y-auto p-6">
+    <div id="strategy-detail" class="max-w-3xl mx-auto">
+        <div class="text-center text-gray-500 py-20">
+            <div class="text-4xl mb-3">&#9881;</div>
+            <p>Select a strategy from the sidebar to view its data requirements and build data files</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function buildControls(className) {
+    return {
+        className,
+        startDate: '',
+        endDate: '',
+        building: false,
+        result: null,
+
+        get canBuild() {
+            return this.startDate && this.endDate && /^\d{4}-\d{2}$/.test(this.startDate) && /^\d{4}-\d{2}$/.test(this.endDate);
+        },
+
+        async buildData() {
+            this.building = true;
+            this.result = null;
+            try {
+                const resp = await fetch('/strategy/build', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        class_name: this.className,
+                        start_date: this.startDate,
+                        end_date: this.endDate,
+                    }),
+                });
+                this.result = await resp.json();
+                if (this.result.success) {
+                    // Refresh the spec panel to show updated status
+                    setTimeout(() => {
+                        htmx.ajax('GET', `/strategy/spec/${this.className}`, '#strategy-detail');
+                    }, 1000);
+                }
+            } catch (e) {
+                this.result = { success: false, error: e.message };
+            }
+            this.building = false;
+        },
+    }
+}
+</script>
+{% endblock %}

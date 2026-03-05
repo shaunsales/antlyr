@@ -1,0 +1,131 @@
+<div class="space-y-4">
+    <!-- Strategy Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="text-lg font-semibold text-gray-100">{{ strategy_name }}</h2>
+            <p class="text-xs text-gray-500 font-mono">{{ class_name }}</p>
+        </div>
+        {% if status.ready %}
+        <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-green-900 text-green-300">Data Ready</span>
+        {% elif status.has_manifest %}
+        <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-900 text-yellow-300">Needs Rebuild</span>
+        {% else %}
+        <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-700 text-gray-400">No Data</span>
+        {% endif %}
+    </div>
+
+    <!-- Data Spec -->
+    <div class="bg-gray-800 rounded-lg p-4 space-y-3">
+        <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Data Requirements</h3>
+        
+        <div class="grid grid-cols-3 gap-3 text-sm">
+            <div>
+                <span class="text-gray-500 text-xs">Venue</span>
+                <p class="text-gray-200 font-medium">{{ spec.venue }}</p>
+            </div>
+            <div>
+                <span class="text-gray-500 text-xs">Market</span>
+                <p class="text-gray-200 font-medium">{{ spec.market }}</p>
+            </div>
+            <div>
+                <span class="text-gray-500 text-xs">Ticker</span>
+                <p class="text-gray-200 font-medium">{{ spec.ticker }}</p>
+            </div>
+        </div>
+
+        <!-- Intervals & Indicators -->
+        <div class="space-y-2">
+            {% for interval, indicators in spec.intervals.items() %}
+            <div class="bg-gray-750 rounded p-2.5 border border-gray-700">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-sm font-medium text-blue-400">{{ interval }}</span>
+                    {% if indicators %}
+                    <span class="text-xs text-gray-500">{{ indicators|length }} indicator{{ 's' if indicators|length != 1 }}</span>
+                    {% else %}
+                    <span class="text-xs text-gray-500">OHLCV only</span>
+                    {% endif %}
+                </div>
+                {% if indicators %}
+                <div class="flex flex-wrap gap-1.5 mt-1.5">
+                    {% for ind_name, ind_params in indicators %}
+                    <span class="px-2 py-0.5 rounded bg-gray-700 text-xs text-gray-300 font-mono">
+                        {{ ind_name }}{% if ind_params %}({{ ind_params.values()|join(', ') }}){% endif %}
+                    </span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Existing Data Status -->
+    {% if status.has_manifest %}
+    <div class="bg-gray-800 rounded-lg p-4 space-y-3">
+        <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Current Data</h3>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+            <div>
+                <span class="text-gray-500 text-xs">Date Range</span>
+                <p class="text-gray-200 font-mono text-xs">{{ status.manifest.date_range.start }} → {{ status.manifest.date_range.end }}</p>
+            </div>
+            <div>
+                <span class="text-gray-500 text-xs">Built At</span>
+                <p class="text-gray-200 font-mono text-xs">{{ status.manifest.built_at[:19] }}</p>
+            </div>
+        </div>
+        {% for interval, q in status.manifest.quality.items() %}
+        <div class="flex items-center justify-between text-xs">
+            <span class="text-gray-400">{{ interval }}</span>
+            <span class="text-gray-300">{{ "{:,}".format(q.bars) }} bars</span>
+            <span class="{% if q.coverage_pct >= 99 %}text-green-400{% elif q.coverage_pct >= 90 %}text-yellow-400{% else %}text-red-400{% endif %}">
+                {{ q.coverage_pct }}% coverage
+            </span>
+        </div>
+        {% endfor %}
+
+        {% if status.errors %}
+        <div class="mt-2 p-2.5 bg-red-900/30 border border-red-800 rounded text-xs text-red-300">
+            <p class="font-semibold mb-1">Validation errors:</p>
+            {% for err in status.errors %}
+            <p>{{ err }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Build Controls -->
+    <div class="bg-gray-800 rounded-lg p-4 space-y-3" x-data="buildControls('{{ class_name }}')">
+        <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Build Data</h3>
+        <div class="grid grid-cols-2 gap-3">
+            <div>
+                <label class="text-xs text-gray-500">Start (YYYY-MM)</label>
+                <input type="text" x-model="startDate" placeholder="2024-01"
+                       class="w-full bg-gray-700 border border-gray-600 rounded px-2.5 py-1.5 text-sm text-gray-200 font-mono">
+            </div>
+            <div>
+                <label class="text-xs text-gray-500">End (YYYY-MM)</label>
+                <input type="text" x-model="endDate" placeholder="2025-01"
+                       class="w-full bg-gray-700 border border-gray-600 rounded px-2.5 py-1.5 text-sm text-gray-200 font-mono">
+            </div>
+        </div>
+        <button @click="buildData()" :disabled="!canBuild || building"
+                class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded text-sm transition">
+            <span x-text="building ? 'Building...' : 'Build Data'"></span>
+        </button>
+        <div x-show="result" class="p-2.5 rounded text-xs"
+             :class="result?.success ? 'bg-green-900/50 text-green-300 border border-green-800' : 'bg-red-900/50 text-red-300 border border-red-800'">
+            <template x-if="result?.success">
+                <div>
+                    <p class="font-semibold mb-1">Data built successfully</p>
+                    <template x-for="(q, interval) in result.quality" :key="interval">
+                        <p><span x-text="interval" class="font-mono"></span>: <span x-text="q.bars.toLocaleString()"></span> bars, <span x-text="q.coverage_pct"></span>% coverage</p>
+                    </template>
+                </div>
+            </template>
+            <template x-if="result && !result.success">
+                <p x-text="result.error || result.errors?.join(', ')"></p>
+            </template>
+        </div>
+    </div>
+</div>

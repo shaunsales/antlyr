@@ -64,22 +64,53 @@ Binance Futures only (initially). Big-cap USDT-M perpetuals (BTCUSDT, ETHUSDT, e
 
 Build the multi-interval data files that a strategy needs.
 
-### 3A.1 StrategyDataSpec
-Define what data a strategy requires:
+### 3A.1 Strategy Data Interface
+Each strategy declares its data dependencies via a `data_spec()` method on the base class. This is the **single source of truth** — the web UI reads it to know what to build, and the engine validates it before running.
+
 ```python
+class SingleAssetStrategy(ABC):
+
+    @abstractmethod
+    def data_spec(self) -> StrategyDataSpec:
+        """Declare the data this strategy requires."""
+        ...
+
 @dataclass
 class StrategyDataSpec:
-    name: str                          # strategy name (folder name)
     venue: str                         # "binance"
     market: str                        # "futures"
     ticker: str                        # "BTCUSDT"
-    date_range: tuple[str, str]        # ("2024-01", "2025-01")
     intervals: dict[str, list]         # {"1m": [], "1h": [("adx", {"length": 14})]}
 ```
 
-- `intervals` maps each interval to a list of indicator specs.
+- `intervals` maps each interval to a list of `(indicator_name, params)` tuples.
 - `1m` is always required (execution interval) — typically no indicators, just OHLCV.
 - Larger intervals carry indicators relevant to that timeframe.
+- **Date range is NOT part of the spec** — it's chosen in the web UI at build time and stored in the manifest. The strategy only validates that all data files share the same start timestamp.
+
+Example:
+```python
+class ADXTrend(SingleAssetStrategy):
+    def data_spec(self) -> StrategyDataSpec:
+        return StrategyDataSpec(
+            venue="binance",
+            market="futures",
+            ticker="BTCUSDT",
+            intervals={
+                "1m": [],
+                "1h": [("adx", {"length": 14}), ("sma", {"length": 50})],
+            },
+        )
+```
+
+### Validation
+Before a backtest runs, the engine checks:
+1. Strategy folder exists at `output/strategies/{strategy.name}/`
+2. A parquet file exists for every interval in `data_spec().intervals`
+3. Each parquet contains the expected OHLCV columns + indicator columns
+4. All parquet files share the same start timestamp
+
+If any check fails, the engine raises a clear error (e.g. "Missing 1h.parquet — build data first").
 
 ### 3A.2 Data Builder
 - Download/load OHLCV for each interval from Binance (reuse existing `core/data/binance.py`).
@@ -89,12 +120,14 @@ class StrategyDataSpec:
 - Write `manifest.json` with full spec + build timestamp + data quality summary.
 
 ### 3A.3 Web UI — Strategy Data Builder Page
-- Create/select a strategy by name.
-- Pick venue (Binance) + ticker (from available data or download).
-- Pick date range.
-- Per interval: select which indicators to compute (with parameters).
-- "Build" button → generates parquet files, shows progress + quality summary.
-- If files already exist and date range matches, show current status. Flag if rebuild needed.
+- **Auto-discovers** strategy classes from `strategies/` directory.
+- Select a strategy from dropdown → UI reads its `data_spec()` and displays:
+  - Venue, market, ticker (read-only, defined by strategy)
+  - Intervals and indicators (read-only, defined by strategy)
+  - Date range picker (user chooses this)
+- "Build Data" button → downloads OHLCV, computes indicators, saves parquets + manifest.
+- Shows data quality summary (coverage %, gaps, bar counts per interval).
+- If data already exists, shows current status. Flags if date range changed or spec doesn't match files.
 
 ---
 

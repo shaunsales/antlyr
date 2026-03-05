@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 
-from app.routes import data, backtest, basis
+from app.routes import data, backtest, basis, strategy
 
 # App setup
 app = FastAPI(
@@ -37,6 +37,7 @@ async def home(request: Request):
 app.include_router(data.router, prefix="/data", tags=["data"])
 app.include_router(basis.router, prefix="/basis", tags=["basis"])
 app.include_router(backtest.router, prefix="/backtest", tags=["backtest"])
+app.include_router(strategy.router, prefix="/strategy", tags=["strategy"])
 
 
 @app.get("/health")
