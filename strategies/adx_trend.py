@@ -10,6 +10,8 @@ data_spec() pattern.
 
 from typing import Optional
 
+import pandas as pd
+
 from core.strategy.base import SingleAssetStrategy, StrategyConfig
 from core.strategy.data import StrategyDataSpec, StrategyData
 from core.strategy.position import Signal, Position
@@ -60,6 +62,52 @@ class ADXTrend(SingleAssetStrategy):
             ("sma", {"length": self.sma_length}),
         ]
 
-    def on_bar(self, idx, data, capital, position):
-        # Placeholder — will be refactored to use StrategyData in 3B.2
+    def on_bar(self, timestamp, data: StrategyData, balance: float, position: Optional[Position]):
+        """
+        V2 on_bar: called every 1m with multi-interval StrategyData.
+        
+        Uses 1h ADX + SMA for trend direction, 1m close for execution.
+        """
+        # Get latest closed 1h bar
+        try:
+            h1 = data.bar("1h", timestamp)
+        except (ValueError, KeyError):
+            return Signal.hold()  # No 1h data yet
+        
+        adx = h1.get("ADX_14")
+        sma = h1.get(f"SMA_{self.sma_length}")
+        
+        # Need valid indicators
+        if adx is None or sma is None or pd.isna(adx) or pd.isna(sma):
+            return Signal.hold()
+        
+        # Current 1m close price
+        m1 = data.bar("1m", timestamp)
+        price = m1["close"]
+        
+        # --- Entry logic ---
+        if position is None:
+            if adx > self.adx_threshold and price > sma:
+                return Signal.buy(
+                    size=1.0,
+                    reason=f"adx={adx:.1f}>thr price={price:.0f}>sma={sma:.0f}",
+                )
+            elif adx > self.adx_threshold and price < sma:
+                return Signal.sell(
+                    size=1.0,
+                    reason=f"adx={adx:.1f}>thr price={price:.0f}<sma={sma:.0f}",
+                )
+        
+        # --- Exit logic ---
+        if position is not None:
+            # Exit if trend weakens
+            if adx < self.adx_threshold * 0.8:
+                return Signal.close(reason=f"adx_weak={adx:.1f}")
+            
+            # Exit if price crosses SMA against position
+            if position.side.value == "long" and price < sma:
+                return Signal.close(reason=f"price={price:.0f}<sma={sma:.0f}")
+            elif position.side.value == "short" and price > sma:
+                return Signal.close(reason=f"price={price:.0f}>sma={sma:.0f}")
+        
         return Signal.hold()

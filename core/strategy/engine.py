@@ -560,6 +560,7 @@ class BacktestEngine:
         
         # Save results to strategy folder
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result.config["run_id"] = run_id
         results_dir = folder / "results"
         results_dir.mkdir(parents=True, exist_ok=True)
         
