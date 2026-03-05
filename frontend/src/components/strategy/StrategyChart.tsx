@@ -7,9 +7,10 @@ import {
   LineSeries,
   HistogramSeries,
 } from "lightweight-charts";
+import type { StrategyChartData } from "@/types/api";
 
 interface Props {
-  chartData: string; // JSON string
+  chartData: StrategyChartData;
   separateCols: string[];
 }
 
@@ -25,22 +26,10 @@ export default function StrategyChart({ chartData, separateCols }: Props) {
   const chartsRef = useRef<IChartApi[]>([]);
 
   useEffect(() => {
-    // Cleanup previous charts
     chartsRef.current.forEach((c) => c.remove());
     chartsRef.current = [];
 
-    let parsed: {
-      ohlcv: { time: string; open: number; high: number; low: number; close: number }[];
-      volume: { time: string; value: number; color: string }[];
-      overlays: Record<string, { time: string; value: number }[]>;
-      indicators: Record<string, { time: string; value: number }[]>;
-    };
-
-    try {
-      parsed = JSON.parse(chartData);
-    } catch {
-      return;
-    }
+    if (!chartData?.ohlcv?.length) return;
 
     const chartOptions = {
       layout: {
@@ -72,11 +61,11 @@ export default function StrategyChart({ chartData, separateCols }: Props) {
         wickDownColor: "#ef4444",
         wickUpColor: "#22c55e",
       });
-      candleSeries.setData(parsed.ohlcv as never[]);
+      candleSeries.setData(chartData.ohlcv as never[]);
 
       // Overlays on price chart
       let ci = 0;
-      for (const [name, data] of Object.entries(parsed.overlays || {})) {
+      for (const [name, data] of Object.entries(chartData.overlays || {})) {
         const series = chart.addSeries(LineSeries, {
           color: COLORS[ci % COLORS.length],
           lineWidth: 1,
@@ -98,7 +87,7 @@ export default function StrategyChart({ chartData, separateCols }: Props) {
       chartsRef.current.push(chart);
 
       let ci = 0;
-      for (const [name, data] of Object.entries(parsed.indicators || {})) {
+      for (const [name, data] of Object.entries(chartData.indicators || {})) {
         const series = chart.addSeries(LineSeries, {
           color: COLORS[ci % COLORS.length],
           lineWidth: 1,
@@ -112,7 +101,7 @@ export default function StrategyChart({ chartData, separateCols }: Props) {
     }
 
     // ── Volume chart ──
-    if (volumeRef.current) {
+    if (volumeRef.current && chartData.volume?.length) {
       const chart = createChart(volumeRef.current, {
         ...chartOptions,
         height: 80,
@@ -123,7 +112,7 @@ export default function StrategyChart({ chartData, separateCols }: Props) {
         priceFormat: { type: "volume" },
         priceScaleId: "",
       });
-      volSeries.setData(parsed.volume as never[]);
+      volSeries.setData(chartData.volume as never[]);
 
       chart.timeScale().fitContent();
     }
@@ -163,7 +152,9 @@ export default function StrategyChart({ chartData, separateCols }: Props) {
       {separateCols.length > 0 && (
         <div ref={indicatorRef} className="rounded bg-gray-900" />
       )}
-      <div ref={volumeRef} className="rounded bg-gray-900" />
+      {chartData?.volume?.length > 0 && (
+        <div ref={volumeRef} className="rounded bg-gray-900" />
+      )}
     </div>
   );
 }

@@ -180,11 +180,21 @@ export interface BuildRequest {
   end_date: string;
 }
 
+export interface StrategyChartData {
+  ohlcv: OhlcvBar[];
+  volume: VolumeBar[];
+  overlays: Record<string, { time: number; value: number }[]>;
+  indicators: Record<string, { time: number; value: number }[]>;
+  resampled: boolean;
+  chart_interval: string | null;
+  original_bars: number;
+}
+
 export interface PreviewData {
   strategy_name: string;
   class_name: string;
   interval: string;
-  chart_data: string; // JSON string for chart
+  chart_data: StrategyChartData;
   overlay_cols: string[];
   separate_cols: string[];
   all_cols: string[];

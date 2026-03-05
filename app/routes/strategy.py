@@ -11,9 +11,13 @@ import pkgutil
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from app.routes.data import _NumpyEncoder
 
 from core.strategy.base import SingleAssetStrategy
 from core.data.storage import list_available_periods
@@ -349,51 +353,76 @@ async def strategy_data_preview(
     overlay_cols = [c for c in indicator_cols if any(c.startswith(p) for p in _PRICE_OVERLAY_PREFIXES)]
     separate_cols = [c for c in indicator_cols if c not in overlay_cols]
 
-    # Prepare chart data (downsample if needed)
+    # Prepare chart data — resample if needed for performance
+    _RESAMPLE_LADDER = [
+        ("1min", "1m"), ("5min", "5m"), ("15min", "15m"),
+        ("1h", "1h"), ("4h", "4h"), ("1D", "1d"),
+    ]
+    max_bars = 8000
     chart_df = df
-    max_points = 50000
-    if len(chart_df) > max_points:
-        step = len(chart_df) // max_points
-        chart_df = chart_df.iloc[::step]
+    original_bars = len(df)
+    chart_interval = None
+
+    if len(chart_df) > max_bars:
+        ohlcv_agg = {
+            "open": "first", "high": "max", "low": "min",
+            "close": "last", "volume": "sum",
+        }
+        # Also aggregate indicator columns with mean
+        extra_agg = {c: "mean" for c in indicator_cols if c in chart_df.columns}
+        agg_dict = {**ohlcv_agg, **extra_agg}
+
+        for rule, label in _RESAMPLE_LADDER:
+            candidate = chart_df.resample(rule).agg(agg_dict).dropna(subset=["open"])
+            if len(candidate) <= max_bars:
+                chart_df = candidate
+                chart_interval = label
+                break
+        else:
+            chart_df = chart_df.resample("1D").agg(agg_dict).dropna(subset=["open"])
+            chart_interval = "1d"
 
     chart_df = chart_df.fillna(0)
 
-    # Build lightweight-charts-compatible data structures
+    # Build lightweight-charts-compatible data with unix epoch timestamps
     ohlcv_data = []
     volume_data = []
     for ts, row in chart_df.iterrows():
-        t = ts.isoformat()
+        t = int(ts.timestamp())
         ohlcv_data.append({
             "time": t,
-            "open": row["open"],
-            "high": row["high"],
-            "low": row["low"],
-            "close": row["close"],
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
         })
         if "volume" in chart_df.columns:
             color = "#22c55e80" if row["close"] >= row["open"] else "#ef444480"
-            volume_data.append({"time": t, "value": row["volume"], "color": color})
+            volume_data.append({"time": t, "value": float(row["volume"]), "color": color})
 
     overlays_data = {}
     for col in overlay_cols:
         overlays_data[col] = [
-            {"time": ts.isoformat(), "value": v}
+            {"time": int(ts.timestamp()), "value": float(v)}
             for ts, v in chart_df[col].items()
         ]
 
     indicators_data = {}
     for col in separate_cols:
         indicators_data[col] = [
-            {"time": ts.isoformat(), "value": v}
+            {"time": int(ts.timestamp()), "value": float(v)}
             for ts, v in chart_df[col].items()
         ]
 
-    chart_data = json.dumps({
+    chart_data = {
         "ohlcv": ohlcv_data,
         "volume": volume_data,
         "overlays": overlays_data,
         "indicators": indicators_data,
-    })
+        "resampled": chart_interval is not None,
+        "chart_interval": chart_interval,
+        "original_bars": original_bars,
+    }
 
     # Prepare table data (paginated)
     total_rows = len(df)
@@ -419,7 +448,7 @@ async def strategy_data_preview(
                 rec[col] = str(val)
         table_data.append(rec)
 
-    return {
+    resp = {
         "class_name": class_name,
         "strategy_name": instance.name,
         "interval": interval,
@@ -435,3 +464,5 @@ async def strategy_data_preview(
             "total_pages": total_pages,
         },
     }
+    content = json.loads(json.dumps(resp, cls=_NumpyEncoder))
+    return JSONResponse(content=content)
