@@ -65,27 +65,31 @@ export default function BuildControls({ className, onBuilt }: Props) {
       ) : (
         <>
           {/* Date range inputs */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="mb-1 block text-xs text-gray-500">
+              <label className="mb-1.5 block text-xs font-medium text-gray-400">
                 Start Date
               </label>
               <input
                 type="month"
                 value={startDate}
+                min={dates.earliest_start}
+                max={dates.latest_end}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="w-full rounded border border-gray-700 bg-gray-800 px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+                className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2.5 text-sm text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-gray-500">
+              <label className="mb-1.5 block text-xs font-medium text-gray-400">
                 End Date
               </label>
               <input
                 type="month"
                 value={endDate}
+                min={dates.earliest_start}
+                max={dates.latest_end}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="w-full rounded border border-gray-700 bg-gray-800 px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+                className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2.5 text-sm text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
               />
             </div>
           </div>
