@@ -1,46 +1,163 @@
-import { NavLink, Outlet } from "react-router-dom";
-import { Database, TrendingUp, FlaskConical, Play, Download } from "lucide-react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import {
+  Database,
+  FlaskConical,
+  Play,
+  TrendingUp,
+  ChevronRight,
+} from "lucide-react";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarProvider,
+  SidebarRail,
+} from "@/components/ui/sidebar";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
-const navItems = [
-  { to: "/data", label: "Data", icon: Database },
-  { to: "/download", label: "Download", icon: Download },
-  { to: "/basis", label: "Basis", icon: TrendingUp },
-  { to: "/strategy", label: "Strategy", icon: FlaskConical },
-  { to: "/backtest", label: "Backtest", icon: Play },
+// ── Nav structure ──
+
+interface NavItem {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  to?: string;
+  children?: { label: string; to: string }[];
+}
+
+const navItems: NavItem[] = [
+  {
+    label: "Data",
+    icon: Database,
+    children: [
+      { label: "Browser", to: "/data" },
+      { label: "Download", to: "/download" },
+    ],
+  },
+  {
+    label: "Strategies",
+    icon: FlaskConical,
+    children: [
+      { label: "Single Asset", to: "/strategies/single-asset" },
+      { label: "Basis", to: "/strategies/basis" },
+      { label: "Multi-Leg", to: "/strategies/multi-leg" },
+    ],
+  },
+  {
+    label: "Backtest",
+    icon: Play,
+    to: "/backtest",
+  },
 ];
+
+// ── Layout ──
 
 export default function AppLayout() {
   return (
-    <div className="flex h-screen flex-col bg-gray-950 text-gray-100">
-      {/* Top nav */}
-      <header className="flex h-14 flex-shrink-0 items-center border-b border-gray-800 px-6">
-        <span className="text-sm font-bold tracking-wide text-gray-200">
-          Strategy Lab
-        </span>
-        <nav className="ml-8 flex gap-1">
-          {navItems.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) =>
-                `flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition ${
-                  isActive
-                    ? "bg-gray-800 text-white"
-                    : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
-                }`
-              }
-            >
-              <Icon className="h-4 w-4" />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-      </header>
-
-      {/* Page content */}
-      <main className="flex-1 overflow-hidden">
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset>
         <Outlet />
-      </main>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
+  );
+}
+
+function AppSidebar() {
+  const { pathname } = useLocation();
+
+  return (
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+      <SidebarHeader className="px-4 py-4">
+        <NavLink to="/" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+          <TrendingUp className="h-5 w-5 shrink-0 text-blue-400" />
+          <span className="text-sm font-bold tracking-wide text-sidebar-foreground group-data-[collapsible=icon]:hidden">
+            Strategy Lab
+          </span>
+        </NavLink>
+      </SidebarHeader>
+
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+          <SidebarMenu>
+            {navItems.map((item) =>
+              item.children ? (
+                <CollapsibleNavItem
+                  key={item.label}
+                  item={item}
+                  pathname={pathname}
+                />
+              ) : (
+                <SidebarMenuItem key={item.label}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === item.to}
+                    tooltip={item.label}
+                  >
+                    <NavLink to={item.to!}>
+                      <item.icon />
+                      <span>{item.label}</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ),
+            )}
+          </SidebarMenu>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarRail />
+    </Sidebar>
+  );
+}
+
+function CollapsibleNavItem({
+  item,
+  pathname,
+}: {
+  item: NavItem;
+  pathname: string;
+}) {
+  const isGroupActive = item.children?.some((c) => pathname.startsWith(c.to)) ?? false;
+
+  return (
+    <Collapsible asChild defaultOpen={isGroupActive} className="group/collapsible">
+      <SidebarMenuItem>
+        <CollapsibleTrigger asChild>
+          <SidebarMenuButton tooltip={item.label} isActive={isGroupActive}>
+            <item.icon />
+            <span>{item.label}</span>
+            <ChevronRight className="ml-auto h-4 w-4 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+          </SidebarMenuButton>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <SidebarMenuSub>
+            {item.children!.map((child) => (
+              <SidebarMenuSubItem key={child.to}>
+                <SidebarMenuSubButton
+                  asChild
+                  isActive={pathname === child.to}
+                >
+                  <NavLink to={child.to}>{child.label}</NavLink>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            ))}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </SidebarMenuItem>
+    </Collapsible>
   );
 }
