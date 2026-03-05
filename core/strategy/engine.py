@@ -432,7 +432,8 @@ class BacktestEngine:
         if self.verbose:
             print(f"Running {strategy.name} on {len(df_1m):,} 1m bars...")
         
-        # Main backtest loop — iterate 1m bars
+        # Main backtest loop — iterate all 1m bars
+        # (indicator warmup is handled at data build time — all bars are clean)
         for idx in range(len(df_1m)):
             timestamp = df_1m.index[idx]
             price = df_1m.iloc[idx]["close"]

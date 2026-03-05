@@ -78,6 +78,66 @@ INDICATOR_PRESETS = {
 }
 
 
+# Warmup bars needed per indicator type.
+# For each indicator, this is the minimum number of bars required
+# before the first non-NaN value is produced.
+INDICATOR_WARMUP: dict[str, callable] = {
+    # Trend — simple lookback
+    "sma":   lambda p: p.get("length", 20),
+    "ema":   lambda p: p.get("length", 20),
+    "wma":   lambda p: p.get("length", 20),
+    "macd":  lambda p: p.get("slow", 26) + p.get("signal", 9),
+    "adx":   lambda p: 2 * p.get("length", 14),  # DM smoothing + ADX smoothing
+    # Momentum
+    "rsi":   lambda p: p.get("length", 14) + 1,
+    "stoch": lambda p: p.get("k", 14) + p.get("d", 3),
+    "cci":   lambda p: p.get("length", 20),
+    "willr": lambda p: p.get("length", 14),
+    "roc":   lambda p: p.get("length", 10),
+    "mom":   lambda p: p.get("length", 10),
+    # Volatility
+    "bbands": lambda p: p.get("length", 20),
+    "atr":    lambda p: p.get("length", 14),
+    "natr":   lambda p: p.get("length", 14),
+    "kc":     lambda p: p.get("length", 20),
+    # Volume (cumulative — no warmup needed)
+    "obv":  lambda p: 0,
+    "vwap": lambda p: 0,
+    "mfi":  lambda p: p.get("length", 14),
+    "ad":   lambda p: 0,
+    # Support/Resistance
+    "pivot": lambda p: 1,
+}
+
+
+def get_warmup_bars(indicators: list[tuple[str, dict]]) -> int:
+    """
+    Calculate the maximum warmup bars needed across a list of indicators.
+    
+    Args:
+        indicators: List of (indicator_name, params) tuples
+        
+    Returns:
+        Maximum number of bars needed before all indicators produce valid values.
+        Includes a 10% safety margin, rounded up.
+    """
+    if not indicators:
+        return 0
+    
+    max_warmup = 0
+    for name, params in indicators:
+        fn = INDICATOR_WARMUP.get(name.lower())
+        if fn:
+            max_warmup = max(max_warmup, fn(params))
+        else:
+            # Unknown indicator — conservative estimate from largest param
+            vals = [v for v in params.values() if isinstance(v, (int, float))]
+            max_warmup = max(max_warmup, max(vals) * 2 if vals else 50)
+    
+    # Add 10% safety margin
+    return int(max_warmup * 1.1) + 1
+
+
 def compute_indicators(
     df: pd.DataFrame,
     indicators: list[tuple[str, dict]],

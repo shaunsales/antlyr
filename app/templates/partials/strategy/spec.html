@@ -1,71 +1,71 @@
 <div class="space-y-4">
-    <!-- Strategy Header -->
-    <div class="flex items-center justify-between">
-        <div>
-            <h2 class="text-lg font-semibold text-gray-100">{{ strategy_name }}</h2>
-            <p class="text-xs text-gray-500 font-mono">{{ class_name }}</p>
-        </div>
-        {% if status.ready %}
-        <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-green-900 text-green-300">Data Ready</span>
-        {% elif status.has_manifest %}
-        <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-900 text-yellow-300">Needs Rebuild</span>
-        {% else %}
-        <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-700 text-gray-400">No Data</span>
-        {% endif %}
-    </div>
 
-    <!-- Data Spec -->
+    <!-- Strategy Summary -->
     <div class="bg-gray-800 rounded-lg p-4 space-y-3">
-        <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Data Requirements</h3>
-        
-        <div class="grid grid-cols-3 gap-3 text-sm">
+        <div class="flex items-center justify-between">
             <div>
-                <span class="text-gray-500 text-xs">Venue</span>
-                <p class="text-gray-200 font-medium">{{ spec.venue }}</p>
-            </div>
-            <div>
-                <span class="text-gray-500 text-xs">Market</span>
-                <p class="text-gray-200 font-medium">{{ spec.market }}</p>
-            </div>
-            <div>
-                <span class="text-gray-500 text-xs">Ticker</span>
-                <p class="text-gray-200 font-medium">{{ spec.ticker }}</p>
-            </div>
-        </div>
-
-        <!-- Intervals & Indicators -->
-        <div class="space-y-2">
-            {% for interval, indicators in spec.intervals.items() %}
-            <div class="bg-gray-750 rounded p-2.5 border border-gray-700">
-                <div class="flex items-center justify-between mb-1">
-                    <span class="text-sm font-medium text-blue-400">{{ interval }}</span>
-                    {% if indicators %}
-                    <span class="text-xs text-gray-500">{{ indicators|length }} indicator{{ 's' if indicators|length != 1 }}</span>
-                    {% else %}
-                    <span class="text-xs text-gray-500">OHLCV only</span>
-                    {% endif %}
-                </div>
-                {% if indicators %}
-                <div class="flex flex-wrap gap-1.5 mt-1.5">
-                    {% for ind_name, ind_params in indicators %}
-                    <span class="px-2 py-0.5 rounded bg-gray-700 text-xs text-gray-300 font-mono">
-                        {{ ind_name }}{% if ind_params %}({{ ind_params.values()|join(', ') }}){% endif %}
-                    </span>
-                    {% endfor %}
-                </div>
+                <h2 class="text-lg font-semibold text-gray-100">{{ strategy_name }}</h2>
+                {% if description %}
+                <p class="text-xs text-gray-400 mt-0.5">{{ description }}</p>
                 {% endif %}
             </div>
-            {% endfor %}
+            {% if status.ready %}
+            <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-green-900 text-green-300">Data Ready</span>
+            {% elif status.has_manifest %}
+            <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-900 text-yellow-300">Needs Rebuild</span>
+            {% else %}
+            <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-700 text-gray-400">No Data</span>
+            {% endif %}
+        </div>
+
+        <!-- Venue / Market / Ticker row -->
+        <div class="flex items-center gap-4 text-sm">
+            <div class="flex items-center gap-1.5">
+                <span class="text-gray-500 text-xs">Venue</span>
+                <span class="text-gray-200 font-medium">{{ spec.venue }}</span>
+            </div>
+            <span class="text-gray-600">·</span>
+            <div class="flex items-center gap-1.5">
+                <span class="text-gray-500 text-xs">Market</span>
+                <span class="text-gray-200 font-medium">{{ spec.market }}</span>
+            </div>
+            <span class="text-gray-600">·</span>
+            <div class="flex items-center gap-1.5">
+                <span class="text-gray-500 text-xs">Ticker</span>
+                <span class="text-gray-200 font-medium">{{ spec.ticker }}</span>
+            </div>
+        </div>
+
+        <!-- Data Requirements — line by line -->
+        <div>
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Data Requirements</h3>
+            <div class="space-y-1">
+                {% for req in data_reqs %}
+                <div class="flex items-center gap-2 text-xs py-1 px-2 rounded bg-gray-750 border border-gray-700">
+                    <span class="font-medium text-blue-400 w-8">{{ req.interval }}</span>
+                    {% if req.type == "OHLCV" %}
+                    <span class="text-gray-400">OHLCV</span>
+                    <span class="text-gray-500 ml-auto">{{ req.detail }}</span>
+                    {% else %}
+                    <span class="px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 font-mono">{{ req.detail }}</span>
+                    {% if req.warmup %}
+                    <span class="text-gray-500 ml-auto">{{ req.warmup }} bar warmup</span>
+                    {% endif %}
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
         </div>
     </div>
 
-    <!-- Existing Data Status -->
     {% if status.has_manifest %}
+    <!-- Current Data — shown when data exists -->
     <div class="bg-gray-800 rounded-lg p-4 space-y-3">
         <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Current Data</h3>
+
         <div class="grid grid-cols-2 gap-3 text-sm">
             <div>
-                <span class="text-gray-500 text-xs">Date Range</span>
+                <span class="text-gray-500 text-xs">Tradable Range</span>
                 <p class="text-gray-200 font-mono text-xs">{{ status.manifest.date_range.start }} → {{ status.manifest.date_range.end }}</p>
             </div>
             <div>
@@ -73,15 +73,25 @@
                 <p class="text-gray-200 font-mono text-xs">{{ status.manifest.built_at[:19] }}</p>
             </div>
         </div>
-        {% for interval, q in status.manifest.quality.items() %}
-        <div class="flex items-center justify-between text-xs">
-            <span class="text-gray-400">{{ interval }}</span>
-            <span class="text-gray-300">{{ "{:,}".format(q.bars) }} bars</span>
-            <span class="{% if q.coverage_pct >= 99 %}text-green-400{% elif q.coverage_pct >= 90 %}text-yellow-400{% else %}text-red-400{% endif %}">
-                {{ q.coverage_pct }}% coverage
-            </span>
+
+        <!-- Data files — clickable to preview -->
+        <div class="space-y-1">
+            {% for interval, q in status.manifest.quality.items() %}
+            <button onclick="loadStrategyPreview('{{ class_name }}', '{{ interval }}')"
+                    class="w-full flex items-center text-xs gap-3 px-2.5 py-1.5 rounded border border-gray-700 hover:border-blue-600/50 hover:bg-gray-750 transition cursor-pointer group text-left">
+                <span class="text-blue-400 font-medium w-8 flex-shrink-0 group-hover:text-blue-300">{{ interval }}</span>
+                <span class="font-mono text-gray-500">{{ interval }}.parquet</span>
+                <span class="text-gray-400 ml-auto">{{ "{:,}".format(q.bars) }} bars</span>
+                <span class="{% if q.coverage_pct >= 99 %}text-green-400{% elif q.coverage_pct >= 90 %}text-yellow-400{% else %}text-red-400{% endif %}">
+                    {{ q.coverage_pct }}%
+                </span>
+                {% if q.null_indicator_bars is defined and q.null_indicator_bars > 0 %}
+                <span class="text-yellow-500">{{ q.null_indicator_bars }} NaN</span>
+                {% endif %}
+                <span class="text-gray-600 group-hover:text-blue-400 transition">→</span>
+            </button>
+            {% endfor %}
         </div>
-        {% endfor %}
 
         {% if status.errors %}
         <div class="mt-2 p-2.5 bg-red-900/30 border border-red-800 rounded text-xs text-red-300">
@@ -91,28 +101,122 @@
             {% endfor %}
         </div>
         {% endif %}
-    </div>
-    {% endif %}
 
-    <!-- Build Controls -->
-    <div class="bg-gray-800 rounded-lg p-4 space-y-3" x-data="buildControls('{{ class_name }}')">
-        <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Build Data</h3>
-        <div class="grid grid-cols-2 gap-3">
-            <div>
-                <label class="text-xs text-gray-500">Start (YYYY-MM)</label>
-                <input type="text" x-model="startDate" placeholder="2024-01"
-                       class="w-full bg-gray-700 border border-gray-600 rounded px-2.5 py-1.5 text-sm text-gray-200 font-mono">
-            </div>
-            <div>
-                <label class="text-xs text-gray-500">End (YYYY-MM)</label>
-                <input type="text" x-model="endDate" placeholder="2025-01"
-                       class="w-full bg-gray-700 border border-gray-600 rounded px-2.5 py-1.5 text-sm text-gray-200 font-mono">
+        <!-- Delete button -->
+        <div class="pt-1" id="delete-controls">
+            <button id="delete-btn"
+                    onclick="document.getElementById('delete-btn').style.display='none'; document.getElementById('delete-confirm').style.display='flex';"
+                    class="w-full bg-red-900/40 hover:bg-red-900/60 border border-red-800 text-red-300 font-medium py-2 px-4 rounded text-sm transition">
+                Delete Data
+            </button>
+            <div id="delete-confirm" style="display:none" class="flex gap-2">
+                <button onclick="strategyDelete('{{ class_name }}')"
+                        class="flex-1 bg-red-700 hover:bg-red-600 disabled:bg-gray-600 text-white font-medium py-2 px-4 rounded text-sm transition">
+                    Confirm Delete
+                </button>
+                <button onclick="document.getElementById('delete-btn').style.display=''; document.getElementById('delete-confirm').style.display='none';"
+                        class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-sm transition">
+                    Cancel
+                </button>
             </div>
         </div>
-        <button @click="buildData()" :disabled="!canBuild || building"
-                class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded text-sm transition">
-            <span x-text="building ? 'Building...' : 'Build Data'"></span>
-        </button>
+    </div>
+
+    <!-- Data preview target -->
+    <div id="strategy-data-preview" class="bg-gray-800 rounded-lg p-4" style="display:none"></div>
+
+    {% else %}
+    <!-- Build Controls — shown only when NO data exists -->
+    <div class="bg-gray-800 rounded-lg p-4 space-y-4" x-data="buildControls('{{ class_name }}')" x-init="loadAvailableDates()">
+        <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Build Data</h3>
+
+        <template x-if="!loaded">
+            <p class="text-xs text-gray-500">Loading available dates...</p>
+        </template>
+
+        <template x-if="loaded && allMonths.length === 0">
+            <p class="text-xs text-yellow-400">No raw OHLCV data found for this strategy's intervals. Download data first.</p>
+        </template>
+
+        <template x-if="loaded && allMonths.length > 0">
+            <div class="space-y-4">
+
+                <!-- Per-interval availability -->
+                <div class="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                    <template x-for="(info, iv) in perInterval" :key="iv">
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-blue-400 font-medium" x-text="iv"></span>
+                            <span class="text-gray-500" x-text="info.start + ' → ' + info.end"></span>
+                            <span class="text-gray-600" x-text="'(' + info.count + ' mo)'"></span>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Month grid calendar -->
+                <div class="space-y-0.5">
+                    <!-- Header row -->
+                    <div class="grid grid-cols-[3rem_repeat(12,1fr)] gap-0.5 text-[10px] text-gray-500 font-medium">
+                        <div></div>
+                        <template x-for="m in monthLabels" :key="m">
+                            <div class="text-center" x-text="m"></div>
+                        </template>
+                    </div>
+                    <!-- Year rows -->
+                    <template x-for="year in years" :key="year">
+                        <div class="grid grid-cols-[3rem_repeat(12,1fr)] gap-0.5">
+                            <div class="text-[11px] text-gray-500 font-mono flex items-center" x-text="year"></div>
+                            <template x-for="mi in 12" :key="mi">
+                                <button
+                                    :data-month="year + '-' + String(mi).padStart(2, '0')"
+                                    @click="clickMonth(year + '-' + String(mi).padStart(2, '0'))"
+                                    :disabled="!isAvailable(year + '-' + String(mi).padStart(2, '0'))"
+                                    class="h-7 rounded text-[10px] font-mono transition-all relative"
+                                    :class="cellClass(year + '-' + String(mi).padStart(2, '0'))"
+                                    :style="isWarmup(year + '-' + String(mi).padStart(2, '0')) ? 'background: repeating-linear-gradient(135deg, transparent, transparent 2px, rgba(180,130,50,0.12) 2px, rgba(180,130,50,0.12) 4px)' : ''">
+                                    <span x-text="String(mi).padStart(2, '0')"></span>
+                                </button>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Legend -->
+                <div class="flex items-center gap-4 text-[10px] text-gray-500">
+                    <div class="flex items-center gap-1">
+                        <div class="w-3 h-3 rounded bg-gray-700 border border-gray-600"></div>
+                        <span>Available</span>
+                    </div>
+                    <div class="flex items-center gap-1" x-show="warmupMonths > 0">
+                        <div class="w-3 h-3 rounded bg-gray-700 border border-amber-800/50" style="background: repeating-linear-gradient(135deg, transparent, transparent 2px, rgba(180,130,50,0.15) 2px, rgba(180,130,50,0.15) 4px)"></div>
+                        <span>Warmup (<span x-text="warmupMonths"></span> mo)</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <div class="w-3 h-3 rounded bg-blue-600/40 border border-blue-500/50"></div>
+                        <span>Selected</span>
+                    </div>
+                </div>
+
+                <!-- Selection summary + Build button -->
+                <div class="space-y-2">
+                    <div class="flex items-center justify-between text-xs">
+                        <div x-show="startDate && endDate" class="text-gray-300">
+                            <span class="text-gray-500">Range:</span>
+                            <span class="font-mono text-blue-400" x-text="startDate"></span>
+                            <span class="text-gray-600">→</span>
+                            <span class="font-mono text-blue-400" x-text="endDate"></span>
+                        </div>
+                        <div x-show="!startDate" class="text-gray-500">Click a month to set start</div>
+                        <div x-show="startDate && !endDate" class="text-gray-500">Click a month to set end</div>
+                        <button x-show="startDate" @click="clearSelection()" class="text-gray-500 hover:text-gray-300 text-[11px]">Clear</button>
+                    </div>
+                    <button @click="buildData()" :disabled="!canBuild || building"
+                            class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded text-sm transition">
+                        <span x-text="building ? 'Building...' : 'Build Data'"></span>
+                    </button>
+                </div>
+            </div>
+        </template>
+
         <div x-show="result" class="p-2.5 rounded text-xs"
              :class="result?.success ? 'bg-green-900/50 text-green-300 border border-green-800' : 'bg-red-900/50 text-red-300 border border-red-800'">
             <template x-if="result?.success">
@@ -128,4 +232,5 @@
             </template>
         </div>
     </div>
+    {% endif %}
 </div>

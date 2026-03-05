@@ -67,6 +67,70 @@
 
 {% block scripts %}
 <script>
+async function loadStrategyPreview(className, interval, page, pageSize) {
+    const target = document.getElementById('strategy-data-preview');
+    if (!target) return;
+    target.style.display = 'block';
+    target.innerHTML = '<p class="text-xs text-gray-500">Loading preview...</p>';
+    let url = `/strategy/preview/${className}/${interval}`;
+    if (page) url += `?page=${page}&page_size=${pageSize || 100}`;
+    try {
+        const resp = await fetch(url);
+        const html = await resp.text();
+        target.innerHTML = html;
+        // Execute inline scripts (innerHTML doesn't run them)
+        // Skip non-executable scripts like type="application/json"
+        target.querySelectorAll('script:not([type])').forEach(old => {
+            const s = document.createElement('script');
+            s.textContent = old.textContent;
+            old.replaceWith(s);
+        });
+    } catch (e) {
+        target.innerHTML = '<p class="text-xs text-red-400">Failed to load preview</p>';
+    }
+}
+
+function closeStrategyPreview() {
+    const t = document.getElementById('strategy-data-preview');
+    if (t) { t.innerHTML = ''; t.style.display = 'none'; }
+}
+
+function switchPreviewTab(tab) {
+    const chart = document.getElementById('strat-view-chart');
+    const table = document.getElementById('strat-view-table');
+    const tabChart = document.getElementById('strat-tab-chart');
+    const tabTable = document.getElementById('strat-tab-table');
+    if (!chart || !table) return;
+    const active = 'px-3 py-1.5 text-xs font-medium border-b-2 border-blue-500 text-blue-400';
+    const inactive = 'px-3 py-1.5 text-xs font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300';
+    if (tab === 'chart') {
+        chart.style.display = ''; table.style.display = 'none';
+        tabChart.className = active; tabTable.className = inactive;
+    } else {
+        chart.style.display = 'none'; table.style.display = '';
+        tabChart.className = inactive; tabTable.className = active;
+    }
+}
+
+async function strategyDelete(className) {
+    const btn = document.querySelector('#delete-confirm button');
+    if (btn) btn.textContent = 'Deleting...';
+    try {
+        const resp = await fetch('/strategy/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ class_name: className }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            htmx.ajax('GET', `/strategy/spec/${className}`, '#strategy-detail');
+        }
+    } catch (e) {
+        console.error('Delete failed:', e);
+        if (btn) btn.textContent = 'Confirm Delete';
+    }
+}
+
 function buildControls(className) {
     return {
         className,
@@ -74,9 +138,120 @@ function buildControls(className) {
         endDate: '',
         building: false,
         result: null,
+        loaded: false,
+        allMonths: [],
+        availableSet: new Set(),
+        warmupSet: new Set(),
+        selectableSet: new Set(),
+        warmupMonths: 0,
+        earliestStart: '',
+        years: [],
+        perInterval: {},
+        monthLabels: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
 
         get canBuild() {
-            return this.startDate && this.endDate && /^\d{4}-\d{2}$/.test(this.startDate) && /^\d{4}-\d{2}$/.test(this.endDate);
+            return this.startDate && this.endDate && this.startDate < this.endDate;
+        },
+
+        async loadAvailableDates() {
+            try {
+                const resp = await fetch(`/strategy/available-dates/${this.className}`);
+                const data = await resp.json();
+                if (data.error || !data.months || data.months.length === 0) {
+                    this.loaded = true;
+                    return;
+                }
+                this.allMonths = data.months;
+                this.warmupMonths = data.warmup_months || 0;
+                this.earliestStart = data.earliest_start;
+                this.perInterval = data.per_interval || {};
+
+                // Build sets for fast lookup
+                this.availableSet = new Set(data.months);
+
+                // Warmup months: available but before earliest_start
+                const esIdx = data.months.indexOf(data.earliest_start);
+                for (let i = 0; i < esIdx; i++) {
+                    this.warmupSet.add(data.months[i]);
+                }
+
+                // Selectable: available AND not warmup (but end can be last month)
+                for (const m of data.months) {
+                    if (!this.warmupSet.has(m)) {
+                        this.selectableSet.add(m);
+                    }
+                }
+
+                // Compute year range for the grid
+                const yearSet = new Set();
+                for (const m of data.months) yearSet.add(m.substring(0, 4));
+                this.years = [...yearSet].sort();
+
+            } catch (e) {
+                console.error('Failed to load available dates:', e);
+            }
+            this.loaded = true;
+        },
+
+        isAvailable(month) {
+            return this.selectableSet.has(month);
+        },
+
+        isWarmup(month) {
+            return this.warmupSet.has(month);
+        },
+
+        isInRange(month) {
+            if (!this.startDate || !this.endDate) return false;
+            return month >= this.startDate && month <= this.endDate;
+        },
+
+        isStart(month) { return month === this.startDate; },
+        isEnd(month) { return month === this.endDate; },
+
+        cellClass(month) {
+            // Not on disk at all
+            if (!this.availableSet.has(month) && !this.warmupSet.has(month)) {
+                return 'bg-gray-900/30 text-gray-700 cursor-default';
+            }
+            // Warmup — on disk but disabled
+            if (this.warmupSet.has(month)) {
+                return 'text-amber-800/70 cursor-not-allowed border border-amber-900/30';
+            }
+            // Start or End marker
+            if (this.isStart(month) || this.isEnd(month)) {
+                return 'bg-blue-600 text-white ring-1 ring-blue-400 cursor-pointer';
+            }
+            // In selected range
+            if (this.isInRange(month)) {
+                return 'bg-blue-600/30 text-blue-300 border border-blue-500/30 cursor-pointer';
+            }
+            // Available, not selected
+            return 'bg-gray-700/50 text-gray-400 hover:bg-gray-600 hover:text-gray-200 border border-gray-600/50 cursor-pointer';
+        },
+
+        clickMonth(month) {
+            if (!this.selectableSet.has(month)) return;
+
+            if (!this.startDate || (this.startDate && this.endDate)) {
+                // First click or reset: set start
+                this.startDate = month;
+                this.endDate = '';
+            } else {
+                // Second click: set end
+                if (month <= this.startDate) {
+                    // Clicked before start — reset start
+                    this.startDate = month;
+                    this.endDate = '';
+                } else {
+                    this.endDate = month;
+                }
+            }
+        },
+
+        clearSelection() {
+            this.startDate = '';
+            this.endDate = '';
         },
 
         async buildData() {
@@ -94,7 +269,6 @@ function buildControls(className) {
                 });
                 this.result = await resp.json();
                 if (this.result.success) {
-                    // Refresh the spec panel to show updated status
                     setTimeout(() => {
                         htmx.ajax('GET', `/strategy/spec/${this.className}`, '#strategy-detail');
                     }, 1000);

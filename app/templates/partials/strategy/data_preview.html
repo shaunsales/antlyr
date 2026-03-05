@@ -1,0 +1,106 @@
+<div>
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-3">
+            <h3 class="text-sm font-semibold text-gray-200">
+                <span class="text-blue-400">{{ interval }}</span> · {{ strategy_name }}
+            </h3>
+            <span class="px-2 py-0.5 bg-blue-900/50 text-blue-300 text-xs rounded">
+                {{ "{:,}".format(pagination.total_rows) }} bars
+            </span>
+            {% if overlay_cols %}
+            <span class="px-2 py-0.5 bg-purple-900/50 text-purple-300 text-xs rounded">
+                {{ overlay_cols|length }} overlay{{ 's' if overlay_cols|length != 1 }}
+            </span>
+            {% endif %}
+            {% if separate_cols %}
+            <span class="px-2 py-0.5 bg-amber-900/50 text-amber-300 text-xs rounded">
+                {{ separate_cols|length }} indicator{{ 's' if separate_cols|length != 1 }}
+            </span>
+            {% endif %}
+        </div>
+        <button onclick="closeStrategyPreview()"
+                class="text-gray-500 hover:text-gray-300 text-xs">✕ Close</button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex border-b border-gray-700 mb-3">
+        <button id="strat-tab-chart" onclick="switchPreviewTab('chart')"
+                class="px-3 py-1.5 text-xs font-medium border-b-2 border-blue-500 text-blue-400">
+            Chart
+        </button>
+        <button id="strat-tab-table" onclick="switchPreviewTab('table')"
+                class="px-3 py-1.5 text-xs font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300">
+            Table
+        </button>
+    </div>
+
+    <!-- Chart View -->
+    <div id="strat-view-chart">
+        <div id="strat-price-chart" class="bg-gray-900 rounded" style="height: 300px;"></div>
+        {% if separate_cols %}
+        <div id="strat-indicator-chart" class="bg-gray-900 rounded mt-1" style="height: 150px;"></div>
+        {% endif %}
+        <div id="strat-volume-chart" class="bg-gray-900 rounded mt-1" style="height: 80px;"></div>
+    </div>
+
+    <!-- Table View -->
+    <div id="strat-view-table" style="display:none">
+        <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+                <thead class="bg-gray-700/50">
+                    <tr>
+                        <th class="px-2 py-1.5 text-left text-gray-400 font-medium">Timestamp</th>
+                        {% for col in all_cols %}
+                        <th class="px-2 py-1.5 text-right text-gray-400 font-medium {% if col in overlay_cols %}text-purple-400{% elif col in separate_cols %}text-amber-400{% endif %}">
+                            {{ col }}
+                        </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-800">
+                    {% for row in table_data %}
+                    <tr class="hover:bg-gray-800/50">
+                        <td class="px-2 py-1 font-mono text-gray-400">{{ row.timestamp }}</td>
+                        {% for col in all_cols %}
+                        <td class="px-2 py-1 text-right font-mono {% if col in overlay_cols %}text-purple-300{% elif col in separate_cols %}text-amber-300{% else %}text-gray-300{% endif %}">
+                            {{ row[col] }}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex items-center justify-between mt-3 text-xs">
+            <div class="text-gray-500">
+                {{ (pagination.page - 1) * pagination.page_size + 1 }}–{{ [pagination.page * pagination.page_size, pagination.total_rows] | min }}
+                of {{ "{:,}".format(pagination.total_rows) }}
+            </div>
+            <div class="flex items-center gap-1.5">
+                <select onchange="loadStrategyPreview('{{ class_name }}', '{{ interval }}', 1, parseInt(this.value))"
+                        class="bg-gray-700 border border-gray-600 rounded px-1.5 py-0.5 text-xs">
+                    <option value="100" {% if pagination.page_size == 100 %}selected{% endif %}>100</option>
+                    <option value="500" {% if pagination.page_size == 500 %}selected{% endif %}>500</option>
+                    <option value="1000" {% if pagination.page_size == 1000 %}selected{% endif %}>1000</option>
+                </select>
+                <button onclick="loadStrategyPreview('{{ class_name }}', '{{ interval }}', 1, {{ pagination.page_size }})" {% if pagination.page <= 1 %}disabled{% endif %}
+                        class="px-1.5 py-0.5 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-40">«</button>
+                <button onclick="loadStrategyPreview('{{ class_name }}', '{{ interval }}', {{ pagination.page - 1 }}, {{ pagination.page_size }})" {% if pagination.page <= 1 %}disabled{% endif %}
+                        class="px-1.5 py-0.5 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-40">‹</button>
+                <span class="px-2 text-gray-400">{{ pagination.page }}/{{ pagination.total_pages }}</span>
+                <button onclick="loadStrategyPreview('{{ class_name }}', '{{ interval }}', {{ pagination.page + 1 }}, {{ pagination.page_size }})" {% if pagination.page >= pagination.total_pages %}disabled{% endif %}
+                        class="px-1.5 py-0.5 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-40">›</button>
+                <button onclick="loadStrategyPreview('{{ class_name }}', '{{ interval }}', {{ pagination.total_pages }}, {{ pagination.page_size }})" {% if pagination.page >= pagination.total_pages %}disabled{% endif %}
+                        class="px-1.5 py-0.5 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-40">»</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="application/json" id="strat-chart-data">{{ chart_data | safe }}</script>
+<script>
+initStrategyChart();
+</script>

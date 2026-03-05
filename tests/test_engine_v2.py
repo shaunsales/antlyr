@@ -60,7 +60,7 @@ class TestFixedEntryExit(SingleAssetStrategy):
             ticker="TESTUSDT",
             intervals={
                 "1m": [],
-                "1h": [("sma", {"length": 5})],
+                "1h": [],
             },
         )
     
@@ -154,7 +154,6 @@ def build_synthetic_data(strategy_name: str) -> dict:
         "low": [99.5, 99.5, 109.5, 99.5, 99.5],
         "close": h_close,
         "volume": [6000.0] * n_h,
-        "SMA_5": [np.nan, np.nan, np.nan, np.nan, 104.0],
     }, index=idx_h)
     df_1h.index.name = "open_time"
     df_1h.to_parquet(data_dir / "1h.parquet")
@@ -170,7 +169,8 @@ def build_synthetic_data(strategy_name: str) -> dict:
             "1m": {"bars": n_bars, "start": str(idx[0]), "end": str(idx[-1]),
                     "null_bars": 0, "coverage_pct": 100.0, "columns": list(df_1m.columns)},
             "1h": {"bars": n_h, "start": str(idx_h[0]), "end": str(idx_h[-1]),
-                    "null_bars": 4, "coverage_pct": 20.0, "columns": list(df_1h.columns)},
+                    "null_bars": 0, "coverage_pct": 100.0,
+                    "columns": list(df_1h.columns)},
         },
     }
     save_manifest(strategy_name, manifest)

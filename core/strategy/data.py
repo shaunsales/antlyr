@@ -18,7 +18,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from core.indicators import compute_indicators
+from core.indicators import compute_indicators, get_warmup_bars
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +61,44 @@ class StrategyDataSpec:
         for ind_name, params in self.intervals.get(interval, []):
             cols.extend(_indicator_column_names(ind_name, params))
         return cols
+
+    def warmup_bars(self, interval: str) -> int:
+        """
+        Calculate the number of warmup bars needed for an interval.
+
+        Returns the maximum lookback across all indicators for this interval,
+        with a 10% safety margin. Returns 0 for intervals with no indicators.
+        """
+        indicators = self.intervals.get(interval, [])
+        return get_warmup_bars(indicators)
+
+    def max_warmup_seconds(self) -> int:
+        """
+        Calculate the maximum warmup time in seconds across all intervals.
+
+        This is used by the data builder to know how much extra data to fetch
+        before the user's requested start_date.
+        """
+        max_seconds = 0
+        for interval, indicators in self.intervals.items():
+            wb = get_warmup_bars(indicators)
+            if wb > 0:
+                secs = wb * _interval_seconds(interval)
+                max_seconds = max(max_seconds, secs)
+        return max_seconds
+
+    def warmup_periods(self) -> int:
+        """
+        Number of extra monthly periods to prepend for indicator warmup.
+
+        Converts max_warmup_seconds to whole months (rounded up + 1 for safety).
+        """
+        secs = self.max_warmup_seconds()
+        if secs == 0:
+            return 0
+        days = secs / 86400
+        months = int(days / 30) + 2  # +2: round up + safety margin
+        return months
 
     def to_dict(self) -> dict:
         """Serialise to dict for JSON manifest."""
@@ -327,16 +365,35 @@ class StrategyDataBuilder:
         # Parse date range into list of periods
         periods = _date_range_to_periods(start_date, end_date)
 
+        # Prepend extra periods for indicator warmup
+        warmup_months = spec.warmup_periods()
+        if warmup_months > 0:
+            extended_start = _subtract_months(start_date, warmup_months)
+            warmup_periods = _date_range_to_periods(extended_start, start_date)
+            # Remove last element to avoid duplicating start_date
+            warmup_periods = [p for p in warmup_periods if p not in periods]
+            all_periods = warmup_periods + periods
+            if self.verbose:
+                print(f"Indicator warmup: prepending {len(warmup_periods)} extra months "
+                      f"({extended_start} → {start_date})")
+        else:
+            all_periods = periods
+
+        # The user's requested start timestamp — indicators must be warm by here
+        requested_start = pd.Timestamp(f"{start_date}-01", tz="UTC")
+
         quality_summary = {}
 
         for interval, indicators in spec.intervals.items():
             if self.verbose:
-                print(f"Building {interval} data ({len(indicators)} indicators)...")
+                wb = spec.warmup_bars(interval)
+                print(f"Building {interval} data ({len(indicators)} indicators, "
+                      f"{wb} warmup bars needed)...")
 
-            # Load OHLCV
+            # Load OHLCV (including warmup periods)
             df = load_ohlcv(
                 spec.venue, spec.market, spec.ticker, interval,
-                periods=periods,
+                periods=all_periods,
             )
 
             if df is None or len(df) == 0:
@@ -348,31 +405,68 @@ class StrategyDataBuilder:
             if self.verbose:
                 print(f"  Loaded {len(df):,} bars ({df.index[0]} to {df.index[-1]})")
 
-            # Compute indicators
+            # Compute indicators (on full data including warmup)
             if indicators:
                 df = compute_indicators(df, indicators)
                 if self.verbose:
                     ind_names = [name for name, _ in indicators]
                     print(f"  Computed indicators: {', '.join(ind_names)}")
 
-            # Save parquet
+            # Check that indicators are warm at requested_start
+            if indicators:
+                all_valid_mask = df.notna().all(axis=1)
+                if all_valid_mask.any():
+                    first_valid_ts = df.index[all_valid_mask.values.argmax()]
+                    if first_valid_ts > requested_start:
+                        if self.verbose:
+                            print(f"  WARNING: {interval} indicators not fully warm at "
+                                  f"{requested_start}. First valid bar: {first_valid_ts}. "
+                                  f"Need more historical data for warmup.")
+
+            bars_before_trim = len(df)
+
+            # Trim to requested date range — discard warmup-only bars.
+            # Output parquets contain only the user's requested range with
+            # all indicators fully warmed from bar 0.
+            df = df[df.index >= requested_start]
+
+            if len(df) == 0:
+                raise ValueError(
+                    f"No data for {interval} after trimming to requested start "
+                    f"{requested_start}. Loaded {bars_before_trim} bars total."
+                )
+
+            trimmed = bars_before_trim - len(df)
+            if self.verbose and trimmed > 0:
+                print(f"  Trimmed {trimmed} warmup bars, "
+                      f"{len(df):,} bars in output range")
+
+            # Save parquet — clean data, indicators warm from bar 0
             parquet_path = data_dir / f"{interval}.parquet"
             df.to_parquet(parquet_path)
 
-            # Quality stats
+            # Quality stats on the trimmed (output) data
             total_bars = len(df)
-            null_bars = int(df.isnull().any(axis=1).sum())
+            ohlcv_cols = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
+            null_ohlcv_bars = int(df[ohlcv_cols].isnull().any(axis=1).sum()) if ohlcv_cols else 0
+            null_any_bars = int(df.isnull().any(axis=1).sum())
+
             quality_summary[interval] = {
                 "bars": total_bars,
                 "start": str(df.index[0]),
                 "end": str(df.index[-1]),
-                "null_bars": null_bars,
-                "coverage_pct": round((total_bars - null_bars) / total_bars * 100, 1) if total_bars > 0 else 0,
+                "null_bars": null_ohlcv_bars,
+                "null_indicator_bars": max(0, null_any_bars - null_ohlcv_bars),
+                "warmup_bars_fetched": trimmed,
+                "coverage_pct": round((total_bars - null_ohlcv_bars) / total_bars * 100, 1) if total_bars > 0 else 0,
                 "columns": list(df.columns),
             }
 
             if self.verbose:
                 print(f"  Saved {parquet_path} ({total_bars:,} bars)")
+                if null_any_bars > 0:
+                    print(f"  WARNING: {null_any_bars} bars still have NaN values "
+                          f"after trimming — may need more warmup data")
 
         # Build manifest
         manifest = {
@@ -474,6 +568,26 @@ class StrategyDataValidator:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _subtract_months(date_str: str, months: int) -> str:
+    """
+    Subtract N months from a 'YYYY-MM' date string.
+
+    Returns a new 'YYYY-MM' string.
+    """
+    if re.match(r"^\d{4}-\d{2}$", date_str):
+        year, month = int(date_str[:4]), int(date_str[5:7])
+    elif re.match(r"^\d{4}$", date_str):
+        year, month = int(date_str), 1
+    else:
+        raise ValueError(f"Invalid date format: {date_str}")
+
+    # Subtract months
+    total_months = year * 12 + (month - 1) - months
+    new_year = total_months // 12
+    new_month = total_months % 12 + 1
+    return f"{new_year:04d}-{new_month:02d}"
+
 
 def _date_range_to_periods(start: str, end: str) -> list[str]:
     """

@@ -874,5 +874,82 @@ class TestTrailingStopLoss:
         assert "trailing_stop_hit" in t.exit_reason
 
 
+# ===================================================================
+# 9. Indicator warmup — builder trims warmup, engine gets clean data
+# ===================================================================
+
+class TestWarmup:
+    """
+    Tests that the data builder handles indicator warmup correctly.
+
+    The builder should:
+    1. Fetch extra historical data to cover indicator lookback periods.
+    2. Compute indicators on the full data (including warmup).
+    3. Trim output parquets to the requested date range.
+    4. All indicators should be valid from bar 0 of the output.
+    """
+
+    def test_warmup_bars_calculation(self):
+        """StrategyDataSpec.warmup_bars() should return correct lookback."""
+        spec = StrategyDataSpec(
+            venue="test", market="test", ticker="TESTUSDT",
+            intervals={
+                "1m": [],
+                "1h": [("sma", {"length": 50}), ("adx", {"length": 14})],
+            },
+        )
+        # SMA(50) needs 50 bars, ADX(14) needs 28 bars
+        # max = 50, with 10% margin = 56
+        wb = spec.warmup_bars("1h")
+        assert wb >= 50
+        assert wb <= 60
+
+    def test_warmup_periods_calculation(self):
+        """warmup_periods() should return enough months to cover warmup."""
+        spec = StrategyDataSpec(
+            venue="test", market="test", ticker="TESTUSDT",
+            intervals={
+                "1m": [],
+                "1h": [("sma", {"length": 200})],
+            },
+        )
+        # SMA(200) on 1h = 200h ≈ 8.3 days → ~1 month needed + safety
+        months = spec.warmup_periods()
+        assert months >= 2
+
+    def test_no_warmup_for_no_indicators(self):
+        """No warmup needed when intervals have no indicators."""
+        spec = StrategyDataSpec(
+            venue="test", market="test", ticker="TESTUSDT",
+            intervals={"1m": []},
+        )
+        assert spec.warmup_bars("1m") == 0
+        assert spec.warmup_periods() == 0
+
+    def test_subtract_months_helper(self):
+        """_subtract_months should correctly subtract across year boundaries."""
+        from core.strategy.data import _subtract_months
+        assert _subtract_months("2025-03", 2) == "2025-01"
+        assert _subtract_months("2025-01", 3) == "2024-10"
+        assert _subtract_months("2025-06", 12) == "2024-06"
+
+    def test_engine_iterates_all_bars_from_zero(self):
+        """With clean (pre-trimmed) data, engine should start at bar 0."""
+        # Build clean data with no NaN indicators
+        prices = np.linspace(100, 110, 150)
+        spec = _make_spec({"1m": [], "1h": []})
+        name = "test_warmup_clean"
+        _cleanup(name)
+        try:
+            _build_data(name, prices, spec)
+            strat = FixedEntryExitStrategy()
+            strat.config.name = name
+            result = BacktestEngine(verbose=False).run(strat, capital=100_000, costs=CostModel())
+            # Engine uses all bars — start_time should be bar 0
+            assert result.total_bars == 150
+        finally:
+            _cleanup(name)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
