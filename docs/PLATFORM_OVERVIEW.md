@@ -1,702 +1,127 @@
-# Backtesting Platform Overview
+# Platform Overview
 
-A modular Python platform for cross-venue basis arbitrage research, backtesting, and data management. Includes a web-based UI and support for single-asset, multi-legged, and basis strategies.
+High-level architecture of the Basis Arbitrage Research Platform.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          WEB APP LAYER                                    │
-│  React SPA (Vite + TypeScript + shadcn/ui) ←→ FastAPI JSON API           │
-├─────────────────────────────────────────────────────────────────────────┤
-│  Sidebar Navigation                                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │
-│  │ Data         │  │ Strategies   │  │ Backtest     │                  │
-│  │ • Browser    │  │ • Single     │  │ • Run strats │                  │
-│  │ • Download   │  │ • Basis      │  │ • View results│                 │
-│  │ • Chart/Table│  │ • Multi-Leg  │  │              │                  │
-│  └──────────────┘  └──────────────┘  └──────────────┘                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                           DATA LAYER                                     │
-├─────────────────────────────────────────────────────────────────────────┤
-│  Downloaders              Storage                   Loader              │
-│  ┌─────────────┐         ┌─────────────┐          ┌─────────────┐      │
-│  │ binance.py  │ ──────► │ Parquet     │ ◄─────── │ load_ohlcv()│      │
-│  │ hl_s3.py    │         │ Files       │          │             │      │
-│  │ hl_build.py │         │ (monthly)   │          │ Handles:    │      │
-│  └─────────────┘         └─────────────┘          │ - Multi-file│      │
-│                                                   │ - Concat    │      │
-│  ┌─────────────┐         ┌─────────────┐          │ - Dedup     │      │
-│  │ basis.py    │ ──────► │ Basis Files │          └─────────────┘      │
-│  └─────────────┘         └─────────────┘                               │
-├─────────────────────────────────────────────────────────────────────────┤
-│                          STRATEGY LAYER                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐        │
-│  │ SingleAsset     │  │ MultiLegged     │  │ BasisStrategy   │        │
-│  │ ─────────────── │  │ ─────────────── │  │ ─────────────── │        │
-│  │ • One asset     │  │ • Multiple legs │  │ • Pre-computed  │        │
-│  │ • Long/Short    │  │ • Simultaneous  │  │   basis files   │        │
-│  │ • on_bar()      │  │ • on_bar()      │  │ • Spread arb    │        │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘        │
-├─────────────────────────────────────────────────────────────────────────┤
-│                          ENGINE LAYER                                    │
-├─────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                      BacktestEngine                              │   │
-│  │  ─────────────────────────────────────────────────────────────── │   │
-│  │  1. Load data (per strategy.required_data())                     │   │
-│  │  2. Compute indicators (per strategy.required_indicators())      │   │
-│  │  3. Align timestamps (for multi-leg)                             │   │
-│  │  4. Bar-by-bar iteration:                                        │   │
-│  │     • Call strategy.on_bar() → Signal(s)                         │   │
-│  │     • Execute trades (Position → Trade)                          │   │
-│  │     • Apply costs (CostModel)                                    │   │
-│  │     • Track equity curve                                         │   │
-│  │  5. Compute metrics → BacktestResult                             │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────────────┤
-│                          OUTPUT                                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│  BacktestResult                                                         │
-│  ├── trades: list[Trade]      # All executed trades                    │
-│  ├── equity_curve: Series     # Portfolio value over time              │
-│  ├── metrics: Sharpe, DD, etc # Computed performance metrics           │
-│  └── config: dict             # Strategy + cost configuration          │
-└─────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────┐
+│  Frontend — React SPA                                 │
+│  Vite + TypeScript + TailwindCSS + shadcn/ui          │
+│  lightweight-charts · TanStack Query/Table             │
+├───────────────────────────────────────────────────────┤
+│  Backend — FastAPI (JSON API only)                    │
+│  Routes: /data  /strategy  /basis  /backtest          │
+├───────────────────────────────────────────────────────┤
+│  Core — Python framework                              │
+│  Data pipeline · Indicators · Strategy · Engine        │
+├───────────────────────────────────────────────────────┤
+│  Storage — Parquet files                              │
+│  data/{venue}/{market}/{ticker}/{interval}/*.parquet  │
+│  output/strategies/{name}/data/ + results/            │
+└───────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 1. Data Layer
+## Data Layer
 
-### 1.1 Storage Structure
-
-All data is stored as Parquet files in a hierarchical directory structure:
-
+### Storage
+All OHLCV data stored as monthly Parquet files:
 ```
 data/{venue}/{market}/{ticker}/{interval}/{period}.parquet
 ```
+- **Venues**: Binance, Hyperliquid
+- **Schema**: DatetimeIndex (UTC) + open/high/low/close/volume
+- **Loader**: `load_ohlcv()` auto-concatenates multi-file ranges
 
-| Component | Description | Examples |
-|-----------|-------------|----------|
-| `venue` | Data source | `binance`, `hyperliquid` |
-| `market` | Market type | `futures`, `perp`, `spot` |
-| `ticker` | Symbol | `BTCUSDT`, `BTC-USD`, `PAXG-USD` |
-| `interval` | Bar size | `1m`, `1h`, `1d` |
-| `period` | Time range | `2024` (year), `2024-10` (month) |
-
-**Example paths:**
-```
-data/binance/futures/BTCUSDT/1h/2025-07.parquet
-data/binance/futures/PAXGUSDT/1m/2025-10.parquet
-data/hyperliquid/perp/BTC-USD/1h/2025-12.parquet
-data/hyperliquid/perp/PAXG-USD/1m/2025-10.parquet
-data/basis/PAXG/1h/2025-10.parquet
-```
-
-### 1.2 DataFrame Schema
-
-All OHLCV data uses a consistent schema:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `index` | `DatetimeIndex` (UTC), name=`open_time` | Bar open timestamp |
-| `open` | `float64` | Open price |
-| `high` | `float64` | High price |
-| `low` | `float64` | Low price |
-| `close` | `float64` | Close price |
-| `volume` | `float64` | Volume |
-
-Optional columns (venue-dependent):
-- `market_open`: `bool` - Whether market is open (always True for 24/7 crypto)
-- `quote_volume`: `float64` - Volume in quote currency (Binance only)
-- `count`: `int` - Number of trades in bar (Binance only)
-- `taker_buy_volume`: `float64` - Taker buy volume (Binance only)
-
-### 1.3 Core Functions
-
-**`core/data/storage.py`**
-
-```python
-# Save data
-save_ohlcv(df, venue, market, ticker, interval, period)
-save_yearly(df, venue, market, ticker, interval, year)
-save_monthly(df, venue, market, ticker, interval, year, month)
-
-# Load data (concatenates multiple files automatically)
-df = load_ohlcv(venue, market, ticker, interval, periods=None)
-# periods=None loads all available; or specify: ["2024", "2025-01", "2025-02"]
-
-# Discovery
-periods = list_available_periods(venue, market, ticker, interval)
-# Returns: ["2024", "2025-01", "2025-02", ...]
-
-all_data = list_all_data()
-# Returns: {venue: {market: {ticker: {interval: [periods]}}}}
-```
-
-### 1.4 Data Downloaders
-
-| Module | Source | Assets |
-|--------|--------|--------|
-| `core/data/binance.py` | Binance Vision | Futures klines (BTCUSDT, PAXGUSDT, etc.) |
-| `core/data/hyperliquid_s3.py` | Hyperliquid S3 | Raw hourly LZ4 trade fills |
-| `core/data/hyperliquid_build.py` | Local LZ4 files | Per-symbol OHLCV Parquet builder |
-| `core/data/basis.py` | Local Parquets | Cross-venue basis spread computation |
-
-#### Binance Pipeline
-```bash
-python -m core.data.binance --symbol BTCUSDT --start 2025-07 --end 2026-01
-```
-Downloads monthly OHLCV klines from Binance Vision. Supports 1m, 1h, 1d intervals.
-
-#### Hyperliquid Pipeline (two-stage)
-```bash
-# Stage 1: Download raw hourly LZ4 trade fills from S3
-python -m core.data.hyperliquid_s3 --start 2025-10-01 --end 2025-12-31
-
-# Stage 2: Build per-symbol OHLCV parquets
-python -m core.data.hyperliquid_build              # default symbols from config
-python -m core.data.hyperliquid_build --symbol ALL  # extract all symbols
-python -m core.data.hyperliquid_build --cleanup     # delete LZ4 after build
-```
-
-The builder reads `core/data/hyperliquid_symbols.json` for the default symbol list (20 top-liquidity perps). It processes month-by-month for memory efficiency, skips existing parquets unless `--force` is used, and can `--cleanup` source LZ4 files after completion.
-
-#### Basis Builder
-```python
-from core.data.basis import create_basis_file, BasisSpec
-spec = BasisSpec(
-    base_venue="binance", base_market="futures", base_ticker="PAXGUSDT",
-    quote_venues=[{"venue": "hyperliquid", "market": "perp", "ticker": "PAXG-USD", "name": "hl"}],
-    interval="1h", periods=["2025-10", "2025-11", "2025-12"],
-)
-df, result = create_basis_file(spec)
-```
+### Downloaders
+| Module | Source |
+|--------|--------|
+| `core/data/binance.py` | Binance Vision monthly klines |
+| `core/data/hyperliquid_s3.py` | Hyperliquid S3 raw LZ4 trades |
+| `core/data/hyperliquid_build.py` | LZ4 → per-symbol OHLCV parquets |
+| `core/data/basis.py` | Cross-venue basis spread computation |
 
 ---
 
-## 2. Strategy Layer
+## Strategy Layer
 
-### 2.1 Strategy Types
+### Strategy Types
+| Type | Use Case |
+|------|----------|
+| `SingleAssetStrategy` | One asset, long/short (trend, mean reversion) |
+| `MultiLeggedStrategy` | Multiple simultaneous positions (pairs, spreads) |
+| `BasisStrategy` | Pre-computed basis file arbitrage |
 
-#### SingleAssetStrategy
+### SingleAsset Workflow
+1. Strategy declares data needs via `data_spec()` (intervals + indicators)
+2. Web UI builds multi-interval parquets with pre-computed indicators
+3. Engine iterates 1m bars, calling `strategy.on_bar()` each bar
+4. Strategy accesses larger intervals via `StrategyData` (look-ahead-safe)
+5. Engine records bar-level state, captures decision context on trades
 
-For strategies that trade one asset (long/short):
-
-```python
-class SingleAssetStrategy(ABC):
-    def __init__(self, config: StrategyConfig = None):
-        self.config = config or StrategyConfig()
-    
-    @abstractmethod
-    def required_indicators(self) -> list[tuple[str, dict]]:
-        """Return indicators to pre-compute."""
-        # Example: [("sma", {"length": 20}), ("rsi", {"length": 14})]
-        pass
-    
-    @abstractmethod
-    def on_bar(
-        self,
-        idx: int,                    # Current bar index
-        data: pd.DataFrame,          # Full OHLCV + indicators
-        capital: float,              # Current capital
-        position: Optional[Position], # Current position (or None)
-    ) -> Signal:
-        """Called each bar. Return Signal (buy/sell/close/hold)."""
-        pass
-```
-
-#### MultiLeggedStrategy
-
-For strategies with multiple simultaneous positions (arbitrage, pairs, spreads):
-
-```python
-class MultiLeggedStrategy(ABC):
-    def __init__(self, config: StrategyConfig = None):
-        self.config = config or StrategyConfig()
-    
-    @abstractmethod
-    def required_data(self) -> dict[str, DataSpec]:
-        """Return data specs for each leg."""
-        # Example: {"tradfi": DataSpec("yahoo", "futures", "GC=F", "15m"),
-        #           "defi": DataSpec("hyperliquid", "perp", "PAXG", "15m")}
-        pass
-    
-    @abstractmethod
-    def required_indicators(self) -> dict[str, list[tuple[str, dict]]]:
-        """Return indicators for each leg."""
-        pass
-    
-    @abstractmethod
-    def on_bar(
-        self,
-        idx: int,
-        data: dict[str, pd.DataFrame],      # {leg_name: DataFrame}
-        capital: float,
-        positions: dict[str, Optional[Position]],  # {leg_name: Position}
-    ) -> dict[str, Signal]:
-        """Called each bar. Return {leg_name: Signal}."""
-        pass
-```
-
-### 2.2 DataSpec
-
-Specifies data requirements for a strategy leg:
-
-```python
-@dataclass
-class DataSpec:
-    venue: str      # "yahoo", "hyperliquid", etc.
-    market: str     # "futures", "perp", "spot"
-    ticker: str     # "GC=F", "PAXG"
-    interval: str   # "15m", "1h"
-```
-
-### 2.3 StrategyConfig
-
-Configuration shared by all strategies:
-
-```python
-@dataclass
-class StrategyConfig:
-    name: str = "unnamed"
-    capital: float = 100_000
-    max_position_pct: float = 1.0     # Max position as % of capital
-    costs: CostModel = CostModel()
-    
-    # Position sizing mode
-    fixed_size: bool = False           # If True, use fixed $ amount
-    fixed_size_amount: float = 0.0     # Fixed $ per trade
-    
-    # Spread trading mode
-    spread_pnl_mode: bool = False      # Calculate P&L from spread convergence
-```
-
-### 2.4 Signal
-
-Strategies return `Signal` objects to indicate actions:
-
-```python
-@dataclass
-class Signal:
-    action: str   # "buy", "sell", "close", "hold"
-    size: float   # Position size as fraction (0.0-1.0)
-    reason: str   # For logging/debugging
-
-# Factory methods
-Signal.buy(size=1.0, reason="entry_signal")
-Signal.sell(size=1.0, reason="short_entry")
-Signal.close(reason="take_profit")
-Signal.hold()
-```
+### Key Classes
+- **`StrategyDataSpec`** — declares venue, ticker, intervals, indicators
+- **`StrategyData`** — look-ahead-safe multi-interval data accessor
+- **`Signal`** — buy / sell / close / hold with reason string
+- **`Position`** — open position with mark-to-market tracking
+- **`Trade`** — closed position with realized PnL + decision context
 
 ---
 
-## 3. Engine Layer
+## Engine Layer
 
-### 3.1 BacktestEngine
+### BacktestEngine
+Orchestrates the backtest loop:
+1. Load strategy data from parquets
+2. Iterate 1m bars, call `strategy.on_bar()` → `Signal`
+3. Execute trades, apply costs (`CostModel`)
+4. Record bar-level state (nav, drawdown, position)
+5. Compute metrics via QuantStats
 
-The engine orchestrates the entire backtest:
-
+### Cost Model
 ```python
-engine = BacktestEngine(verbose=True)
-
-result = engine.run(
-    strategy=MyStrategy(),
-    capital=100_000,
-    costs=CostModel(...),
-    # Optional: load data automatically
-    venue="yahoo", market="futures", ticker="GC=F", interval="15m",
-)
+CostModel(commission_bps=3.5, slippage_bps=2.0, funding_daily_bps=5.0)
 ```
+Applied as round-trip commission + slippage on entry/exit, plus daily funding on open positions.
 
-### 3.2 Execution Flow
-
-#### Single-Asset Strategy
-
-```
-1. Load Data
-   └── load_ohlcv(venue, market, ticker, interval)
-
-2. Compute Indicators
-   └── compute_indicators(df, strategy.required_indicators())
-
-3. Initialize State
-   ├── capital = initial_capital
-   ├── position = None
-   └── equity_curve = []
-
-4. Bar-by-Bar Loop (for idx in range(len(data))):
-   │
-   ├── Update position mark-to-market
-   │   └── position.update_price(close)
-   │
-   ├── Get signal from strategy
-   │   └── signal = strategy.on_bar(idx, data, capital, position)
-   │
-   ├── Execute signal
-   │   ├── BUY  → Create Position(LONG), deduct entry cost
-   │   ├── SELL → Create Position(SHORT), deduct entry cost
-   │   └── CLOSE → Close position, create Trade, apply full costs
-   │
-   └── Record equity (capital + unrealized P&L)
-
-5. Force-close any open positions at end
-
-6. Compute metrics → BacktestResult
-```
-
-#### Multi-Legged Strategy
-
-```
-1. Load Data (for each leg)
-   └── for leg, spec in strategy.required_data():
-         data[leg] = load_ohlcv(spec.venue, spec.market, ...)
-
-2. Align Timestamps
-   └── common_index = intersection of all leg indexes
-
-3. Compute Indicators (for each leg)
-   └── compute_indicators(data[leg], indicators[leg])
-
-4. Initialize State
-   ├── capital = initial_capital
-   ├── positions = {leg: None for leg in legs}
-   └── equity_curve = []
-
-5. Bar-by-Bar Loop (for idx in range(len(common_index))):
-   │
-   ├── Check market hours
-   │   ├── all_markets_open = all(data[leg]["market_open"])
-   │   └── any_near_close = any(data[leg]["near_close"])
-   │
-   ├── Force close if market closing
-   │   └── signals = {leg: Signal.close() for leg with position}
-   │
-   ├── Skip if any market closed
-   │
-   ├── Get signals from strategy
-   │   └── signals = strategy.on_bar(idx, data, capital, positions)
-   │
-   ├── Execute signals (for each leg)
-   │   ├── BUY/SELL → Create Position for leg
-   │   └── CLOSE → Close position, create Trade
-   │
-   └── Record equity (capital + sum of unrealized P&L)
-
-6. Force-close any open positions at end
-
-7. Compute metrics → BacktestResult
-```
+### Output
+Each backtest run produces:
+- `{run_id}_bars.parquet` — bar-level state (nav, drawdown, position)
+- `{run_id}_trades.parquet` — trade log with decision context JSON
+- `{run_id}_meta.json` — config + summary metrics
+- `{run_id}_tearsheet.html` — QuantStats HTML tearsheet
 
 ---
 
-## 4. Position & Trade Tracking
+## Web Application
 
-### 4.1 Position
+### Backend (FastAPI)
+Pure JSON API, no HTML rendering.
 
-An open position in a single asset:
+| Route | Purpose |
+|-------|---------|
+| `/data/` | Browse data tree, preview OHLCV, download from Binance |
+| `/strategy/` | List strategies, view spec, build data, preview parquets |
+| `/basis/` | Build cross-venue basis files |
+| `/backtest/` | List runs, view results, run backtests, serve tearsheets |
 
-```python
-@dataclass
-class Position:
-    id: str                    # Unique ID
-    symbol: str                # Asset symbol
-    side: Side                 # LONG or SHORT
-    leg: str                   # Leg name (for multi-leg)
-    
-    entry_time: datetime
-    entry_price: float
-    size: float                # Notional value ($)
-    
-    current_price: float       # Mark-to-market price
-    unrealized_pnl: float      # Current unrealized P&L
-    status: PositionStatus     # OPEN or CLOSED
-```
+### Frontend (React SPA)
+| Tech | Purpose |
+|------|---------|
+| React 19 + Vite | Framework + build |
+| TypeScript | Type safety |
+| TailwindCSS v4 + shadcn/ui | Styling + components |
+| TanStack Query | API state management |
+| TanStack Table | Data tables with sorting/pagination |
+| lightweight-charts | TradingView-style OHLCV + line charts |
+| React Router v7 | Client-side routing |
 
-**P&L Calculation:**
-```python
-# LONG position
-unrealized_pnl = size * (current_price - entry_price) / entry_price
-
-# SHORT position
-unrealized_pnl = size * (entry_price - current_price) / entry_price
-```
-
-### 4.2 Trade
-
-A closed position with realized P&L:
-
-```python
-@dataclass
-class Trade:
-    position_id: str
-    symbol: str
-    side: Side
-    leg: str
-    
-    entry_time: datetime
-    entry_price: float
-    exit_time: datetime
-    exit_price: float
-    
-    size: float           # Notional value
-    gross_pnl: float      # P&L before costs
-    costs: float          # Total costs
-    net_pnl: float        # gross_pnl - costs
-    
-    exit_reason: str      # "take_profit", "stop_loss", etc.
-    bars_held: int        # Duration in bars
-```
-
----
-
-## 5. Cost Model
-
-### 5.1 CostModel
-
-Defines trading costs applied to each trade:
-
-```python
-@dataclass
-class CostModel:
-    commission_bps: float = 0.0    # Commission per trade (bps)
-    slippage_bps: float = 0.0      # Slippage estimate (bps)
-    funding_daily_bps: float = 0.0 # Daily funding rate (bps)
-    bars_per_day: int = 24         # For funding calculation
-```
-
-### 5.2 Cost Calculations
-
-```python
-# Round-trip cost (entry + exit)
-round_trip_cost = size * (commission_bps + slippage_bps) * 2 / 10000
-
-# Holding cost (funding)
-days_held = bars_held / bars_per_day
-holding_cost = size * (funding_daily_bps / 10000) * days_held
-
-# Total cost
-total_cost = round_trip_cost + holding_cost
-```
-
-**Example:**
-```
-Position: $100,000 notional, held 96 bars (1 day at 15-min interval)
-CostModel: commission=5 bps, slippage=2 bps, funding=5 bps/day
-
-Round-trip: $100,000 × (5 + 2) × 2 / 10000 = $140
-Holding:    $100,000 × 5 / 10000 × 1 day = $50
-Total:      $190
-```
-
-### 5.3 Default Cost Models
-
-```python
-DEFAULT_COSTS = CostModel(
-    commission_bps=3.5,
-    slippage_bps=2.0,
-    funding_daily_bps=5.0,
-    bars_per_day=24,
-)
-
-ZERO_COSTS = CostModel()  # For testing
-```
-
----
-
-## 6. BacktestResult
-
-### 6.1 Structure
-
-```python
-@dataclass
-class BacktestResult:
-    # Configuration
-    strategy_name: str
-    config: dict
-    
-    # Time range
-    start_time: datetime
-    end_time: datetime
-    total_bars: int
-    
-    # Capital
-    initial_capital: float
-    final_capital: float
-    
-    # Trades
-    trades: list[Trade]
-    
-    # Time series
-    equity_curve: pd.Series    # Portfolio value indexed by timestamp
-    drawdown_curve: pd.Series  # Drawdown % indexed by timestamp
-    
-    # Metrics
-    total_return_pct: float
-    annual_return_pct: float
-    sharpe_ratio: float
-    max_drawdown_pct: float
-    win_rate: float
-    profit_factor: float
-    total_trades: int
-```
-
-### 6.2 Metrics Calculation
-
-```python
-# Total Return
-total_return_pct = (final_capital / initial_capital - 1) * 100
-
-# Annualized Return (CAGR)
-days = total_bars / bars_per_day
-annual_return_pct = ((1 + total_return_pct/100) ** (365/days) - 1) * 100
-
-# Sharpe Ratio (annualized)
-returns = equity_curve.pct_change()
-sharpe_ratio = (returns.mean() / returns.std()) * sqrt(bars_per_day * 365)
-
-# Max Drawdown
-rolling_max = equity_curve.cummax()
-drawdown = (equity_curve - rolling_max) / rolling_max
-max_drawdown_pct = abs(drawdown.min()) * 100
-
-# Win Rate
-win_rate = winning_trades / total_trades * 100
-
-# Profit Factor
-profit_factor = sum(winning_pnl) / abs(sum(losing_pnl))
-```
-
----
-
-## 7. Quick Reference
-
-### Minimal Single-Asset Strategy
-
-```python
-from core.strategy import SingleAssetStrategy, StrategyConfig, BacktestEngine
-from core.strategy.position import Signal
-
-class MACrossover(SingleAssetStrategy):
-    def __init__(self, fast=10, slow=20):
-        super().__init__(StrategyConfig(name="MA Crossover"))
-        self.fast, self.slow = fast, slow
-    
-    def required_indicators(self):
-        return [("sma", {"length": self.fast}), ("sma", {"length": self.slow})]
-    
-    def on_bar(self, idx, data, capital, position):
-        if idx < self.slow:
-            return Signal.hold()
-        
-        fast = data[f"SMA_{self.fast}"].iloc[idx]
-        slow = data[f"SMA_{self.slow}"].iloc[idx]
-        
-        if fast > slow and position is None:
-            return Signal.buy(reason="MA cross up")
-        elif fast < slow and position is not None:
-            return Signal.close(reason="MA cross down")
-        return Signal.hold()
-
-# Run
-result = BacktestEngine().run(
-    strategy=MACrossover(),
-    venue="yahoo", market="futures", ticker="GC=F", interval="1h",
-    capital=100_000,
-)
-result.print_report()
-```
-
-### Minimal Multi-Legged Strategy
-
-```python
-from core.strategy import MultiLeggedStrategy, StrategyConfig, DataSpec, BacktestEngine
-from core.strategy.position import Signal
-
-class SpreadStrategy(MultiLeggedStrategy):
-    def __init__(self, threshold_bps=50):
-        super().__init__(StrategyConfig(name="Spread"))
-        self.threshold = threshold_bps
-    
-    def required_data(self):
-        return {
-            "leg1": DataSpec("venue1", "market", "TICKER1", "15m"),
-            "leg2": DataSpec("venue2", "market", "TICKER2", "15m"),
-        }
-    
-    def required_indicators(self):
-        return {"leg1": [], "leg2": []}
-    
-    def on_bar(self, idx, data, capital, positions):
-        p1 = data["leg1"].iloc[idx]["close"]
-        p2 = data["leg2"].iloc[idx]["close"]
-        spread_bps = (p2 - p1) / p1 * 10000
-        
-        if abs(spread_bps) > self.threshold and not any(positions.values()):
-            return {
-                "leg1": Signal.buy(size=0.5, reason="Long leg1"),
-                "leg2": Signal.sell(size=0.5, reason="Short leg2"),
-            }
-        elif any(positions.values()) and abs(spread_bps) < 10:
-            return {
-                "leg1": Signal.close(reason="Spread converged"),
-                "leg2": Signal.close(reason="Spread converged"),
-            }
-        return {}
-
-# Run
-result = BacktestEngine().run(strategy=SpreadStrategy(), capital=100_000)
-result.print_report()
-```
-
----
-
-## 8. File Reference
-
-### Backend (Python)
-
-| Module | Purpose |
-|--------|---------|
-| `core/data/storage.py` | Parquet I/O, `load_ohlcv()`, `save_ohlcv()`, `get_data_path()` |
-| `core/data/binance.py` | Binance Vision monthly klines downloader |
-| `core/data/hyperliquid_s3.py` | Hyperliquid S3 raw LZ4 trade downloader |
-| `core/data/hyperliquid_build.py` | LZ4-to-OHLCV Parquet builder (month-by-month) |
-| `core/data/hyperliquid_symbols.json` | Top-liquidity Hyperliquid perp symbol config |
-| `core/data/basis.py` | Basis file builder (`create_basis_file()`, `load_basis()`) |
-| `core/data/market_hours.py` | Market hours, near-close detection |
-| `core/data/validator.py` | OHLCV validation, gap filling, coverage metrics |
-| `core/indicators/indicators.py` | pandas-ta wrapper, `compute_indicators()` |
-| `core/strategy/base.py` | `SingleAssetStrategy`, `MultiLeggedStrategy`, `DataSpec`, `StrategyConfig` |
-| `core/strategy/basis_strategy.py` | `BasisStrategy`, `BasisPosition`, `BasisSignal` |
-| `core/strategy/data.py` | `StrategyDataSpec`, `StrategyDataBuilder`, `StrategyDataValidator`, manifest |
-| `core/strategy/position.py` | `Position`, `Trade`, `Signal`, `CostModel` |
-| `core/strategy/engine.py` | `BacktestEngine`, `BacktestResult` |
-| `app/main.py` | FastAPI application entry point (JSON API only) |
-| `app/routes/data.py` | Data browser, download, preview endpoints (with OHLCV resampling) |
-| `app/routes/strategy.py` | Strategy spec, build, preview endpoints (with chart resampling) |
-| `app/routes/basis.py` | Basis file builder endpoints |
-| `app/routes/backtest.py` | Backtest runner endpoints |
-| `run_app.py` | Backend launcher |
-
-### Frontend (React)
-
-| Module | Purpose |
-|--------|---------|
-| `frontend/src/App.tsx` | Root component, routes, providers (TooltipProvider, QueryClient) |
-| `frontend/src/components/layout/AppLayout.tsx` | Sidebar navigation with collapsible groups |
-| `frontend/src/components/data/OhlcvChart.tsx` | Candlestick + volume chart (lightweight-charts) |
-| `frontend/src/components/data/DataTable.tsx` | TanStack Table with sorting + pagination |
-| `frontend/src/components/data/DataPreview.tsx` | Chart/table preview for data browser |
-| `frontend/src/components/strategy/StrategyChart.tsx` | Price + overlay + indicator + volume charts (synced) |
-| `frontend/src/components/strategy/MonthRangePicker.tsx` | Calendar month grid picker with warmup/availability |
-| `frontend/src/components/strategy/BuildControls.tsx` | Date range + build button for strategy data |
-| `frontend/src/pages/DataPage.tsx` | Data browser (tree + preview) |
-| `frontend/src/pages/DownloadPage.tsx` | Binance data downloader |
-| `frontend/src/pages/StrategyPage.tsx` | Strategy list + detail (spec, data, preview) |
-| `frontend/src/api/client.ts` | Typed fetch wrapper (`get`, `post`) |
-| `frontend/src/types/api.ts` | TypeScript interfaces for all API responses |
+### Pages
+- **Data Browser** — tree of available data, OHLCV chart + table preview
+- **Download** — Binance data downloader with progress tracking
+- **Strategy** — select strategy, view spec, build data, preview charts
+- **Backtest** — run list sidebar, metrics cards, price/equity/drawdown charts, trades table
