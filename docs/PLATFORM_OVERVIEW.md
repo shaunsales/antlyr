@@ -1,6 +1,6 @@
 # Platform Overview
 
-High-level architecture of the Basis Arbitrage Research Platform.
+High-level architecture of Strategy Lab.
 
 ---
 

@@ -1,6 +1,6 @@
 # Strategy Lab — Frontend
 
-React SPA for the Basis Arbitrage Research Platform.
+React SPA frontend for Strategy Lab.
 
 ## Stack
 
@@ -90,5 +90,5 @@ src/
 | `/strategies/single-asset` | StrategyPage | Single asset strategy builder |
 | `/strategies/basis` | BasisPage | Basis strategy builder |
 | `/strategies/multi-leg` | Placeholder | Multi-leg strategy (future) |
-| `/backtest` | BacktestPage | Run backtests (future) |
+| `/backtest` | BacktestPage | View backtest results (metrics, charts, trades) |
 ```

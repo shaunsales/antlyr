@@ -1,1 +1,1 @@
-# Test suite for basis arbitrage research
+# Test suite for Strategy Lab

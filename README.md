@@ -1,4 +1,4 @@
-# Basis Arbitrage Research Platform
+# Strategy Lab
 
 Crypto strategy backtesting platform with a React web UI. Download OHLCV data, build multi-interval strategy datasets with indicators, run backtests, and visualise results.
 
