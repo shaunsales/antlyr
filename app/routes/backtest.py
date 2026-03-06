@@ -112,6 +112,18 @@ async def view_run(strategy_name: str, run_id: str):
     if trades_path.exists():
         trades_df = pd.read_parquet(trades_path)
         for _, row in trades_df.iterrows():
+            # Parse metadata (decision context) if available
+            raw_meta = row.get("metadata", None)
+            trade_metadata = None
+            if raw_meta is not None:
+                if isinstance(raw_meta, str):
+                    try:
+                        trade_metadata = json.loads(raw_meta)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                elif isinstance(raw_meta, dict):
+                    trade_metadata = raw_meta
+
             trades.append({
                 "side": row.get("side", ""),
                 "entry_time": str(row["entry_time"]),
@@ -125,6 +137,7 @@ async def view_run(strategy_name: str, run_id: str):
                 "bars_held": int(row["bars_held"]),
                 "entry_reason": row.get("entry_reason", ""),
                 "exit_reason": row.get("exit_reason", ""),
+                "metadata": trade_metadata,
             })
 
         # Build trade markers for chart

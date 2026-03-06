@@ -33,6 +33,10 @@ export interface BacktestViewData {
     bars_held: number;
     entry_reason: string;
     exit_reason: string;
+    metadata?: {
+      entry_context?: Record<string, Record<string, unknown> | null>;
+      exit_context?: Record<string, Record<string, unknown> | null>;
+    } | null;
   }[];
   tearsheet_exists: boolean;
   error?: string;

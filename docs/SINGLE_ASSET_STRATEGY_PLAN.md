@@ -167,9 +167,9 @@ Strategy page inline preview:
 | **Frontend** | **React SPA** | **✅ Done** |
 |  | Sidebar nav, pages, charts, tables, dark mode | ✅ Done |
 |  | MonthRangePicker, OHLCV resampling, download page | ✅ Done |
-| **Phase 3** | **Visualisation** | **In Progress** |
+| **Phase 3** | **Visualisation** | **✅ Done** |
 | 3.1 | Backtest viewer (metrics, charts, trades, tearsheet) | ✅ Done |
 | 3.2 | Source data viewer (chart + table preview) | ✅ Done |
-| 3.3 | Run Backtest UI | **← Next** |
-| 3.4 | Trade inspector (decision context panel) | Pending |
+| 3.3 | Run Backtest UI | ✅ Done |
+| 3.4 | Trade inspector (decision context panel) | ✅ Done |
 | 3.5 | Optimisation results table | Deferred |

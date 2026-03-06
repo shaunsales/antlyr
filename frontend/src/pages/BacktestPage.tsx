@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import BacktestViewer from "@/components/backtest/BacktestViewer";
+import RunBacktestForm from "@/components/backtest/RunBacktestForm";
 
 export default function BacktestPage() {
   const [selectedRun, setSelectedRun] = useState<BacktestRun | null>(null);
@@ -25,15 +26,25 @@ export default function BacktestPage() {
     enabled: !!selectedRun,
   });
 
+  const handleRunComplete = (strategyName: string, runId: string) => {
+    setSelectedRun({ strategy_name: strategyName, run_id: runId, meta: {}, folder: "" });
+  };
+
   return (
     <div className="flex h-full">
       {/* Sidebar */}
       <div className="flex w-72 flex-shrink-0 flex-col border-r border-gray-800">
+        {/* Run Backtest Form */}
+        <RunBacktestForm
+          strategies={data?.strategies ?? []}
+          onRunComplete={handleRunComplete}
+        />
+
         <div className="border-b border-gray-800 px-4 py-3">
           <h2 className="text-sm font-semibold text-gray-200">
             Backtest Runs
           </h2>
-          <p className="text-xs text-gray-500">Previous backtest results</p>
+          <p className="text-xs text-gray-500">Previous results</p>
         </div>
 
         <ScrollArea className="flex-1 p-2">

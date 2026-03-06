@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   createChart,
   createSeriesMarkers,
@@ -9,6 +8,7 @@ import {
 } from "lightweight-charts";
 import type { BacktestViewData } from "@/api/backtest";
 import { Badge } from "@/components/ui/badge";
+import { ChevronRight, ChevronDown } from "lucide-react";
 
 interface Props {
   data: BacktestViewData;
@@ -141,79 +141,7 @@ export default function BacktestViewer({ data }: Props) {
 
       {tab === "charts" && <BacktestCharts chartData={data.chart_data} />}
 
-      {tab === "trades" && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead className="bg-gray-800/50">
-              <tr>
-                {[
-                  "Side",
-                  "Entry",
-                  "Entry Price",
-                  "Exit",
-                  "Exit Price",
-                  "Size",
-                  "Net PnL",
-                  "Bars",
-                  "Reason",
-                ].map((h) => (
-                  <th
-                    key={h}
-                    className="px-2 py-1.5 text-left font-medium text-gray-400"
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800">
-              {data.trades.map((t, i) => (
-                <tr key={i} className="hover:bg-gray-800/50">
-                  <td className="px-2 py-1">
-                    <Badge
-                      className={
-                        t.side === "long"
-                          ? "bg-green-900/50 text-green-300"
-                          : "bg-red-900/50 text-red-300"
-                      }
-                    >
-                      {t.side}
-                    </Badge>
-                  </td>
-                  <td className="px-2 py-1 font-mono text-gray-400">
-                    {t.entry_time.slice(0, 16)}
-                  </td>
-                  <td className="px-2 py-1 text-right font-mono text-gray-300">
-                    {t.entry_price.toFixed(2)}
-                  </td>
-                  <td className="px-2 py-1 font-mono text-gray-400">
-                    {t.exit_time.slice(0, 16)}
-                  </td>
-                  <td className="px-2 py-1 text-right font-mono text-gray-300">
-                    {t.exit_price.toFixed(2)}
-                  </td>
-                  <td className="px-2 py-1 text-right font-mono text-gray-400">
-                    {t.size}
-                  </td>
-                  <td
-                    className={`px-2 py-1 text-right font-mono ${
-                      t.net_pnl >= 0 ? "text-green-400" : "text-red-400"
-                    }`}
-                  >
-                    {t.net_pnl.toFixed(2)}
-                  </td>
-                  <td className="px-2 py-1 text-right text-gray-400">
-                    {t.bars_held}
-                  </td>
-                  <td className="px-2 py-1 text-gray-500">
-                    {t.entry_reason} → {t.exit_reason}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {tab === "trades" && <TradesTable trades={data.trades} />}
     </div>
   );
 }
@@ -340,6 +268,196 @@ function BacktestCharts({
       <div ref={equityRef} className="rounded bg-gray-900" />
       <p className="mt-2 text-[11px] font-medium text-gray-500">Drawdown</p>
       <div ref={drawdownRef} className="rounded bg-gray-900" />
+    </div>
+  );
+}
+
+// ── Trades Table with expandable rows (Trade Inspector) ──
+
+type TradeRow = BacktestViewData["trades"][number];
+
+function TradesTable({ trades }: { trades: TradeRow[] }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead className="bg-gray-800/50">
+          <tr>
+            <th className="w-6 px-1 py-1.5" />
+            {["Side", "Entry", "Entry Price", "Exit", "Exit Price", "Size", "Net PnL", "Bars", "Reason"].map((h) => (
+              <th key={h} className="px-2 py-1.5 text-left font-medium text-gray-400">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-800">
+          {trades.map((t, i) => {
+            const isExpanded = expandedIdx === i;
+            const hasContext = !!t.metadata?.entry_context || !!t.metadata?.exit_context;
+            return (
+              <TradeRowWithInspector
+                key={i}
+                trade={t}
+                index={i}
+                isExpanded={isExpanded}
+                hasContext={hasContext}
+                onToggle={() => setExpandedIdx(isExpanded ? null : i)}
+              />
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TradeRowWithInspector({
+  trade: t,
+  index,
+  isExpanded,
+  hasContext,
+  onToggle,
+}: {
+  trade: TradeRow;
+  index: number;
+  isExpanded: boolean;
+  hasContext: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <>
+      <tr
+        className={`cursor-pointer transition ${isExpanded ? "bg-gray-800/70" : "hover:bg-gray-800/50"}`}
+        onClick={onToggle}
+      >
+        <td className="px-1 py-1 text-center text-gray-500">
+          {hasContext ? (
+            isExpanded ? <ChevronDown className="inline h-3 w-3" /> : <ChevronRight className="inline h-3 w-3" />
+          ) : null}
+        </td>
+        <td className="px-2 py-1">
+          <Badge className={t.side === "long" ? "bg-green-900/50 text-green-300" : "bg-red-900/50 text-red-300"}>
+            {t.side}
+          </Badge>
+        </td>
+        <td className="px-2 py-1 font-mono text-gray-400">{t.entry_time.slice(0, 16)}</td>
+        <td className="px-2 py-1 text-right font-mono text-gray-300">{t.entry_price.toFixed(2)}</td>
+        <td className="px-2 py-1 font-mono text-gray-400">{t.exit_time.slice(0, 16)}</td>
+        <td className="px-2 py-1 text-right font-mono text-gray-300">{t.exit_price.toFixed(2)}</td>
+        <td className="px-2 py-1 text-right font-mono text-gray-400">{t.size}</td>
+        <td className={`px-2 py-1 text-right font-mono ${t.net_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+          {t.net_pnl.toFixed(2)}
+        </td>
+        <td className="px-2 py-1 text-right text-gray-400">{t.bars_held}</td>
+        <td className="px-2 py-1 text-gray-500">{t.entry_reason} → {t.exit_reason}</td>
+      </tr>
+      {isExpanded && hasContext && (
+        <tr>
+          <td colSpan={10} className="bg-gray-900/80 px-4 py-3">
+            <ContextPanel metadata={t.metadata!} tradeIndex={index} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// ── Decision Context Panel ──
+
+function ContextPanel({
+  metadata,
+  tradeIndex: _tradeIndex,
+}: {
+  metadata: NonNullable<TradeRow["metadata"]>;
+  tradeIndex: number;
+}) {
+  const { entry_context, exit_context } = metadata;
+
+  const intervals = Array.from(
+    new Set([
+      ...Object.keys(entry_context || {}),
+      ...Object.keys(exit_context || {}),
+    ])
+  ).sort();
+
+  const ohlcvKeys = new Set(["open_time", "open", "high", "low", "close", "volume"]);
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[11px] font-semibold text-gray-400">Decision Context</p>
+      <div className="grid grid-cols-2 gap-4">
+        <ContextSide label="Entry" context={entry_context} intervals={intervals} ohlcvKeys={ohlcvKeys} />
+        <ContextSide label="Exit" context={exit_context} intervals={intervals} ohlcvKeys={ohlcvKeys} />
+      </div>
+    </div>
+  );
+}
+
+function ContextSide({
+  label,
+  context,
+  intervals,
+  ohlcvKeys,
+}: {
+  label: string;
+  context?: Record<string, Record<string, unknown> | null>;
+  intervals: string[];
+  ohlcvKeys: Set<string>;
+}) {
+  if (!context) {
+    return (
+      <div>
+        <p className="mb-1 text-[11px] font-medium text-gray-500">{label}</p>
+        <p className="text-[10px] text-gray-600">No context captured</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="mb-2 text-[11px] font-medium text-blue-400">{label}</p>
+      {intervals.map((interval) => {
+        const barData = context[interval];
+        if (!barData) return null;
+
+        const price = barData.close as number | undefined;
+        const openTime = barData.open_time as string | undefined;
+        const indicators = Object.entries(barData).filter(
+          ([k]) => !ohlcvKeys.has(k)
+        );
+
+        return (
+          <div key={interval} className="mb-2">
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+                {interval}
+              </Badge>
+              {price != null && (
+                <span className="font-mono text-[10px] text-gray-400">
+                  {Number(price).toFixed(2)}
+                </span>
+              )}
+              {openTime && (
+                <span className="text-[10px] text-gray-600">
+                  {String(openTime).slice(0, 16)}
+                </span>
+              )}
+            </div>
+            {indicators.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-1">
+                {indicators.map(([key, val]) => (
+                  <span key={key} className="text-[10px]">
+                    <span className="text-gray-500">{key}:</span>{" "}
+                    <span className="font-mono text-gray-300">
+                      {typeof val === "number" ? val.toFixed(4) : String(val)}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
